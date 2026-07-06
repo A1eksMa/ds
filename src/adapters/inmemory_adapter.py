@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from src.domain.entities import (
     ActId, CntId, IdId, LbId, SrcId, ValId,
@@ -257,4 +257,28 @@ class InMemoryAdapter:
         self._transactions = [r for r in self._transactions if not matches(r)]
         self._archive = [r for r in self._archive if not matches(r)]
         return Ok(before - len(self._transactions))
+
+    # --- Bulk history lookup ---
+
+    def txn_last_values(
+        self,
+        src_id: SrcId,
+        lb_ids: List[LbId],
+        id_ids: List[IdId],
+    ) -> Union[Ok[Dict[Tuple[LbId, IdId], ValId]], Err[StorageError]]:
+        lb_set = {int(x) for x in lb_ids}
+        id_set = {int(x) for x in id_ids}
+        last: Dict[Tuple[int, int], Dict] = {}
+        for row in self._transactions + self._archive:
+            if row["src"] != int(src_id):
+                continue
+            key = (row["lb"], row["id"])
+            if key[0] not in lb_set or key[1] not in id_set:
+                continue
+            if key not in last or row["cnt"] > last[key]["cnt"]:
+                last[key] = row
+        return Ok({
+            (LbId(lb), IdId(id_)): ValId(row["val"])
+            for (lb, id_), row in last.items()
+        })
 

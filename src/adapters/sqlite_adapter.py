@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from src.domain.entities import (
     ActId, CntId, IdId, LbId, SrcId, ValId,
@@ -99,6 +99,13 @@ CREATE VIEW IF NOT EXISTS transactions_full AS
     UNION ALL
     SELECT * FROM transactions_archive;
 """
+
+
+_SQLITE_MAX_VARS = 900  # stay comfortably under SQLite's bound-parameter limit
+
+
+def _chunks(values: List[int], size: int) -> List[List[int]]:
+    return [values[i:i + size] for i in range(0, len(values), size)] or [[]]
 
 
 class SQLiteAdapter:
@@ -460,5 +467,47 @@ class SQLiteAdapter:
             return Ok(cur.rowcount)
         except sqlite3.Error as exc:
             self._conn.rollback()
+            return Err(StorageError(str(exc)))
+
+    # --- Bulk history lookup ---
+
+    def txn_last_values(
+        self,
+        src_id: SrcId,
+        lb_ids: List[LbId],
+        id_ids: List[IdId],
+    ) -> Union[Ok[Dict[Tuple[LbId, IdId], ValId]], Err[StorageError]]:
+        lb_list = sorted({int(x) for x in lb_ids})
+        id_list = sorted({int(x) for x in id_ids})
+        if not lb_list or not id_list:
+            return Ok({})
+        try:
+            result: Dict[Tuple[LbId, IdId], ValId] = {}
+            for lb_chunk in _chunks(lb_list, _SQLITE_MAX_VARS):
+                if not lb_chunk:
+                    continue
+                for id_chunk in _chunks(id_list, _SQLITE_MAX_VARS):
+                    if not id_chunk:
+                        continue
+                    lb_ph = ",".join("?" * len(lb_chunk))
+                    id_ph = ",".join("?" * len(id_chunk))
+                    rows = self._conn.execute(
+                        f"""
+                        SELECT t.lb, t.id, t.val
+                        FROM transactions_full t
+                        JOIN (
+                            SELECT lb, id, MAX(cnt) AS mx
+                            FROM transactions_full
+                            WHERE src = ? AND lb IN ({lb_ph}) AND id IN ({id_ph})
+                            GROUP BY lb, id
+                        ) last ON t.lb = last.lb AND t.id = last.id AND t.cnt = last.mx
+                        WHERE t.src = ?
+                        """,
+                        [int(src_id), *lb_chunk, *id_chunk, int(src_id)],
+                    ).fetchall()
+                    for lb, id_, val in rows:
+                        result[(LbId(lb), IdId(id_))] = ValId(val or 0)
+            return Ok(result)
+        except sqlite3.Error as exc:
             return Err(StorageError(str(exc)))
 

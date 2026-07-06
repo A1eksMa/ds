@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 from typing import Protocol, runtime_checkable
 
 from src.domain.entities import (
@@ -78,4 +78,18 @@ class StoragePort(Protocol):
         src_id: SrcId,
         lb_id: Optional[LbId] = None,
     ) -> Union[Ok[int], Err[StorageError]]: ...
+
+    # --- Bulk history lookup (for act auto-detection on load) ---
+    # For each (lb, id) pair in lb_ids x id_ids that has at least one
+    # transaction (active or archived) under src_id, return its most
+    # recent val (by cnt). Pairs with no history are simply absent from
+    # the returned mapping — callers should treat a missing key the same
+    # as val=0 (no prior value == PATCH territory).
+
+    def txn_last_values(
+        self,
+        src_id: SrcId,
+        lb_ids: List[LbId],
+        id_ids: List[IdId],
+    ) -> Union[Ok[Dict[Tuple[LbId, IdId], ValId]], Err[StorageError]]: ...
 

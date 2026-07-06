@@ -223,3 +223,104 @@ def test_txn_delete_removes_from_both_tables(db):
     assert db.txn_query(include_archive=True).value == []
 
 
+# --- txn_last_values ---
+
+def test_txn_last_values_empty_when_no_history(db):
+    lb = db.lb_intern("email").value
+    src = db.src_get_or_create("CRM", lb).value.src_id
+    id_ = db.id_intern("1").value
+
+    result = db.txn_last_values(src, [lb], [id_])
+    assert isinstance(result, Ok)
+    assert result.value == {}
+
+
+def test_txn_last_values_returns_most_recent(db):
+    lb = db.lb_intern("email").value
+    src = db.src_get_or_create("CRM", lb).value.src_id
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    v1 = db.val_intern("a@b.com").value
+    v2 = db.val_intern("b@b.com").value
+
+    _insert(db, src, lb, id_, v1, act, dt=_TS)
+    _insert(db, src, lb, id_, v2, act, dt=_TS + 1)
+
+    result = db.txn_last_values(src, [lb], [id_])
+    assert isinstance(result, Ok)
+    assert result.value[(lb, id_)] == v2
+
+
+def test_txn_last_values_reflects_delete(db):
+    lb = db.lb_intern("email").value
+    src = db.src_get_or_create("CRM", lb).value.src_id
+    act = db.act_intern(Act.DELETE).value
+    id_ = db.id_intern("1").value
+
+    _insert(db, src, lb, id_, ValId(0), act, dt=_TS)
+
+    result = db.txn_last_values(src, [lb], [id_])
+    assert isinstance(result, Ok)
+    assert int(result.value[(lb, id_)]) == 0
+
+
+def test_txn_last_values_includes_archived(db):
+    lb = db.lb_intern("email").value
+    src = db.src_get_or_create("CRM", lb).value.src_id
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("a@b.com").value
+
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_archive(until_dt=_TS + 1)
+
+    result = db.txn_last_values(src, [lb], [id_])
+    assert isinstance(result, Ok)
+    assert result.value[(lb, id_)] == val
+
+
+def test_txn_last_values_filters_by_src(db):
+    lb = db.lb_intern("email").value
+    src_a = db.src_get_or_create("A", lb).value.src_id
+    src_b = db.src_get_or_create("B", lb).value.src_id
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("a@b.com").value
+
+    _insert(db, src_a, lb, id_, val, act, dt=_TS)
+
+    result = db.txn_last_values(src_b, [lb], [id_])
+    assert isinstance(result, Ok)
+    assert result.value == {}
+
+
+def test_txn_last_values_empty_id_list_returns_empty(db):
+    lb = db.lb_intern("email").value
+    src = db.src_get_or_create("CRM", lb).value.src_id
+
+    result = db.txn_last_values(src, [lb], [])
+    assert isinstance(result, Ok)
+    assert result.value == {}
+
+
+def test_txn_last_values_multiple_ids_and_labels(db):
+    lb_a = db.lb_intern("email").value
+    lb_b = db.lb_intern("phone").value
+    src = db.src_get_or_create("CRM", lb_a).value.src_id
+    act = db.act_intern(Act.POST).value
+    id_1 = db.id_intern("1").value
+    id_2 = db.id_intern("2").value
+    v1 = db.val_intern("a@b.com").value
+    v2 = db.val_intern("+7123").value
+
+    _insert(db, src, lb_a, id_1, v1, act, dt=_TS)
+    _insert(db, src, lb_b, id_2, v2, act, dt=_TS)
+
+    result = db.txn_last_values(src, [lb_a, lb_b], [id_1, id_2])
+    assert isinstance(result, Ok)
+    assert result.value[(lb_a, id_1)] == v1
+    assert result.value[(lb_b, id_2)] == v2
+    assert (lb_b, id_1) not in result.value
+    assert (lb_a, id_2) not in result.value
+
+

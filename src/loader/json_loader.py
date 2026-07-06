@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Dict, Tuple, Union
 
 from src.config.models import SourceConfig
-from src.domain.entities import TransactionInput, ValId
+from src.domain.entities import ActId, IdId, LbId, TransactionInput, ValId
 from src.domain.enums import Act
 from src.domain.errors import StorageError, ValidationError
 from src.domain.result import Err, Ok
@@ -12,24 +13,35 @@ from src.loader import validator as tbl_validator
 from src.ports.storage_port import StoragePort
 
 
+def _act_id(
+    storage: StoragePort, cache: Dict[Act, ActId], act: Act
+) -> Union[Ok[ActId], Err[StorageError]]:
+    if act in cache:
+        return Ok(cache[act])
+    result = storage.act_intern(act)
+    if isinstance(result, Ok):
+        cache[act] = result.value
+    return result
+
+
 def load(
     storage: StoragePort,
     data: dict,
     cfg: SourceConfig,
     dt: float,
-    act: Act = Act.POST,
 ) -> Ok[int] | Err[StorageError] | Err[ValidationError]:
+    """Load a columnar JSON table, auto-detecting act per cell:
+    - raw value is null            -> DELETE
+    - no prior value for (lb, id)  -> PATCH (first appearance, or reappearance after a delete)
+    - a prior value exists         -> POST  (overwriting an existing value)
+    """
     val_result = tbl_validator.validate_table(data, cfg)
     if isinstance(val_result, Err):
         return val_result
 
     storage.begin()
 
-    act_r = storage.act_intern(act)
-    if isinstance(act_r, Err):
-        storage.rollback()
-        return act_r
-    act_id = act_r.value
+    act_cache: Dict[Act, ActId] = {}
 
     key_lb_r = storage.lb_intern(cfg.key_label)
     if isinstance(key_lb_r, Err):
@@ -42,7 +54,7 @@ def load(
         return src_r
     src_id = src_r.value.src_id
 
-    lb_ids: dict[str, object] = {cfg.key_label: key_lb_r.value}
+    lb_ids: Dict[str, LbId] = {cfg.key_label: key_lb_r.value}
     for col in data:
         if col == cfg.key_label:
             continue
@@ -52,20 +64,32 @@ def load(
             return lb_r
         lb_ids[col] = lb_r.value
 
-    count = 0
-    for i in range(len(data[cfg.key_label])):
-        id_r = storage.id_intern(str(data[cfg.key_label][i]))
+    id_ids: list = []
+    for raw_id in data[cfg.key_label]:
+        id_r = storage.id_intern(str(raw_id))
         if isinstance(id_r, Err):
             storage.rollback()
             return id_r
-        id_id = id_r.value
+        id_ids.append(id_r.value)
 
+    non_key_lb_ids = [lb_ids[col] for col in data if col != cfg.key_label]
+    last_r = storage.txn_last_values(src_id, non_key_lb_ids, id_ids)
+    if isinstance(last_r, Err):
+        storage.rollback()
+        return last_r
+    last_values: Dict[Tuple[LbId, IdId], ValId] = last_r.value
+
+    count = 0
+    for i, id_id in enumerate(id_ids):
         for col in data:
             if col == cfg.key_label:
                 continue
 
+            lb_id = lb_ids[col]
             raw = data[col][i]
+
             if raw is None:
+                act = Act.DELETE
                 val_id = ValId(0)
             else:
                 val_r = storage.val_intern(str(raw))
@@ -73,10 +97,17 @@ def load(
                     storage.rollback()
                     return val_r
                 val_id = val_r.value
+                last_val = last_values.get((lb_id, id_id), ValId(0))
+                act = Act.PATCH if int(last_val) == 0 else Act.POST
+
+            act_r = _act_id(storage, act_cache, act)
+            if isinstance(act_r, Err):
+                storage.rollback()
+                return act_r
 
             txn_r = storage.txn_insert(TransactionInput(
-                act=act_id, dt=dt,
-                src=src_id, lb=lb_ids[col], id=id_id,
+                act=act_r.value, dt=dt,
+                src=src_id, lb=lb_id, id=id_id,
                 p=1.0, val=val_id,
             ))
             if isinstance(txn_r, Err):
@@ -93,10 +124,9 @@ def load_file(
     path: Path,
     cfg: SourceConfig,
     dt: float,
-    act: Act = Act.POST,
 ) -> Ok[int] | Err[StorageError] | Err[ValidationError]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return Err(StorageError(str(exc)))
-    return load(storage, data, cfg, dt, act)
+    return load(storage, data, cfg, dt)

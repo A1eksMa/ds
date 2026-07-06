@@ -39,12 +39,13 @@ def test_load_returns_err_on_validation_failure(db):
     assert isinstance(result, Err)
 
 
-def test_load_with_patch_act(db):
+def test_load_overwriting_existing_value_is_post(db):
     data = {"customer_id": ["1"], "email": ["v1@b.com"]}
     service.load(db, data, _cfg(), _TS)
     data2 = {"customer_id": ["1"], "email": ["v2@b.com"]}
-    result = service.load(db, data2, _cfg(), _TS + 1, act=Act.PATCH)
-    assert isinstance(result, Ok)
+    service.load(db, data2, _cfg(), _TS + 1)
+    txns = db.txn_query().value
+    assert txns[-1].act == db.act_intern(Act.POST).value
 
 
 def test_load_multiple_batches_accumulate_transactions(db):

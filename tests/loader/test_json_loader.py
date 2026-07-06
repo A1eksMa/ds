@@ -104,20 +104,74 @@ def test_load_float_values_converted_to_string(db):
     assert isinstance(result, Ok)
 
 
-# --- act и timestamp ---
+# --- act auto-detection ---
 
-def test_load_default_act_is_post(db):
+def test_load_first_insert_is_patch(db):
+    """No prior record for (lb, id) -> PATCH."""
     data = {"customer_id": ["1"], "email": ["a@b.com"]}
     json_loader.load(db, data, _cfg(), _TS)
     txn = db.txn_query().value[0]
-    act_id = db.act_intern(Act.POST).value
-    assert txn.act == act_id
+    assert txn.act == db.act_intern(Act.PATCH).value
 
 
-def test_load_with_patch_act(db):
-    data = {"customer_id": ["1"], "email": ["a@b.com"]}
-    result = json_loader.load(db, data, _cfg(), _TS, act=Act.PATCH)
-    assert isinstance(result, Ok)
+def test_load_overwriting_existing_value_is_post(db):
+    """Prior record had a value -> POST."""
+    data1 = {"customer_id": ["1"], "email": ["a@b.com"]}
+    json_loader.load(db, data1, _cfg(), _TS)
+    data2 = {"customer_id": ["1"], "email": ["b@b.com"]}
+    json_loader.load(db, data2, _cfg(), _TS + 1)
+
+    txns = db.txn_query().value
+    assert txns[-1].act == db.act_intern(Act.POST).value
+
+
+def test_load_null_value_is_delete(db):
+    """Null value -> DELETE, regardless of prior history."""
+    data = {"customer_id": ["1"], "email": [None]}
+    json_loader.load(db, data, _cfg(), _TS)
+    txn = db.txn_query().value[0]
+    assert txn.act == db.act_intern(Act.DELETE).value
+
+
+def test_load_after_delete_is_patch_again(db):
+    """Prior record was deleted (val=0) -> PATCH, not POST."""
+    data1 = {"customer_id": ["1"], "email": ["a@b.com"]}
+    json_loader.load(db, data1, _cfg(), _TS)
+    data2 = {"customer_id": ["1"], "email": [None]}
+    json_loader.load(db, data2, _cfg(), _TS + 1)
+    data3 = {"customer_id": ["1"], "email": ["c@b.com"]}
+    json_loader.load(db, data3, _cfg(), _TS + 2)
+
+    txns = db.txn_query().value
+    assert txns[-1].act == db.act_intern(Act.PATCH).value
+
+
+def test_load_considers_archived_history(db):
+    """History check must include archived transactions, not just active ones."""
+    data1 = {"customer_id": ["1"], "email": ["a@b.com"]}
+    json_loader.load(db, data1, _cfg(), _TS)
+    db.txn_archive(until_dt=_TS + 1)  # first record now archived, not active
+
+    data2 = {"customer_id": ["1"], "email": ["b@b.com"]}
+    json_loader.load(db, data2, _cfg(), _TS + 100)
+
+    txns = db.txn_query(include_archive=True).value
+    assert txns[-1].act == db.act_intern(Act.POST).value
+
+
+def test_load_independent_ids_get_independent_act(db):
+    """Each (lb, id) pair is judged on its own history within the same batch."""
+    data1 = {"customer_id": ["1"], "email": ["a@b.com"]}
+    json_loader.load(db, data1, _cfg(), _TS)
+
+    data2 = {"customer_id": ["1", "2"], "email": ["updated@b.com", "new@b.com"]}
+    json_loader.load(db, data2, _cfg(), _TS + 1)
+
+    id1 = db.id_intern("1").value
+    id2 = db.id_intern("2").value
+    latest = {t.id: t for t in db.txn_query().value if t.dt == _TS + 1}
+    assert latest[id1].act == db.act_intern(Act.POST).value
+    assert latest[id2].act == db.act_intern(Act.PATCH).value
 
 
 def test_load_timestamp_stored_in_transactions(db):

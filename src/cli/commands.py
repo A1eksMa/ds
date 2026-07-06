@@ -8,7 +8,6 @@ from pathlib import Path
 from src.adapters.sqlite_adapter import SQLiteAdapter
 from src.api import service
 from src.config.loader import load_source
-from src.domain.enums import Act
 from src.domain.result import Err
 
 
@@ -19,9 +18,8 @@ def _load(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
         return 1
 
     dt = float(args.dt) if args.dt else time.time()
-    act = Act(args.act.upper())
 
-    result = service.load_file(storage, Path(args.data_file), cfg_r.value, dt, act)
+    result = service.load_file(storage, Path(args.data_file), cfg_r.value, dt)
     if isinstance(result, Err):
         print(f"error: {result.error.message}", file=sys.stderr)
         return 1
@@ -39,11 +37,6 @@ def main(argv: list[str] | None = None) -> int:
     load_p.add_argument("source_dir", help="path to source config directory")
     load_p.add_argument("data_file", help="path to JSON data file")
     load_p.add_argument("--dt", help="unix timestamp (default: current time)")
-    load_p.add_argument(
-        "--act", default="post",
-        choices=["post", "patch", "delete"],
-        help="action type (default: post)",
-    )
 
     args = parser.parse_args(argv)
     storage = SQLiteAdapter(args.db)
