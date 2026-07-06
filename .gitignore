@@ -1,0 +1,251 @@
+# ==================================
+# Python Data Framework .gitignore
+# ==================================
+
+# ========================
+# Python
+# ========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# ========================
+# AI Assistant Files (CRITICAL)
+# ========================
+# Claude Code settings and configurations
+.claude/
+.mcp.json
+**/.mcp.json
+**/CLAUDE.md
+**/PROJECT_RULES.md
+**/AGENT_*.md
+
+# Other AI assistant files
+.ai/
+.assistant/
+*.prompt
+*.ai-instructions
+
+# ========================
+# Database Files
+# ========================
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Database backups
+*.db.bak
+*.sqlite.bak
+*.sql.bak
+
+# ========================
+# Data Framework Specific
+# ========================
+# Runtime data directories (configurable)
+data/
+!data/.gitkeep
+
+# Snapshots archive
+snapshots/
+!snapshots/.gitkeep
+
+# Working directories
+tmp/
+temp/
+cache/
+.cache/
+
+# Configuration with sensitive data
+config.yaml
+config.json
+settings.yaml
+settings.json
+.env.local
+.env.production
+
+# Log files
+logs/
+*.log
+*.log.*
+
+# ========================
+# IDE / Editor
+# ========================
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Sublime Text
+*.tmlanguage.cache
+*.tmPreferences.cache
+*.stTheme.cache
+*.sublime-workspace
+*.sublime-project
+
+# Vim
+*~
+*.swp
+*.swo
+.vimrc.local
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ========================
+# System Files
+# ========================
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Windows
+*.tmp
+*.temp
+desktop.ini
+$RECYCLE.BIN/
+
+# ========================
+# Development / Build
+# ========================
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Documentation builds
+docs/_build/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# ========================
+# Security & Credentials
+# ========================
+# API keys and tokens
+*.key
+*.pem
+*.p12
+*.crt
+*.csr
+secrets.*
+credentials.*
+
+# GitVerse specific (if any)
+.gitverse/
+
+# ========================
+# Framework Testing
+# ========================
+# Test databases and fixtures
+test_*.db
+fixtures/*.db
+**/test_data/*.db
+
+# Test outputs
+test_output/
+test_results/
+
+# Coverage
+.coverage*
+htmlcov/
