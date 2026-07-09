@@ -8,23 +8,50 @@ from pathlib import Path
 from src.adapters.sqlite_adapter import SQLiteAdapter
 from src.api import service
 from src.config.loader import load_source
+from src.domain.errors import NotFound
 from src.domain.result import Err
+
+
+def _err_msg(error) -> str:
+    if isinstance(error, NotFound):
+        return f"{error.entity} not found: {error.key}"
+    return error.message
 
 
 def _load(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
     cfg_r = load_source(Path(args.source_dir))
     if isinstance(cfg_r, Err):
-        print(f"error: {cfg_r.error.message}", file=sys.stderr)
+        print(f"error: {_err_msg(cfg_r.error)}", file=sys.stderr)
         return 1
 
     dt = float(args.dt) if args.dt else time.time()
 
     result = service.load_file(storage, Path(args.data_file), cfg_r.value, dt)
     if isinstance(result, Err):
-        print(f"error: {result.error.message}", file=sys.stderr)
+        print(f"error: {_err_msg(result.error)}", file=sys.stderr)
         return 1
 
     print(f"loaded {result.value} transaction(s)")
+    return 0
+
+
+def _get(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    until_dt = float(args.dt) if args.dt else None
+
+    result = service.export_state_file(
+        storage,
+        Path(args.out),
+        generated_at=time.time(),
+        src_name=args.src,
+        lb_name=args.lb,
+        until_dt=until_dt,
+        include_archive=args.archive,
+    )
+    if isinstance(result, Err):
+        print(f"error: {_err_msg(result.error)}", file=sys.stderr)
+        return 1
+
+    print(f"exported {result.value} record(s) to {args.out}")
     return 0
 
 
@@ -38,11 +65,20 @@ def main(argv: list[str] | None = None) -> int:
     load_p.add_argument("data_file", help="path to JSON data file")
     load_p.add_argument("--dt", help="unix timestamp (default: current time)")
 
+    get_p = sub.add_parser("get", help="export current state to a JSON file")
+    get_p.add_argument("out", help="path to output JSON file")
+    get_p.add_argument("--src", help="filter by source name")
+    get_p.add_argument("--lb", help="filter by label name")
+    get_p.add_argument("--dt", help="unix timestamp cutoff, 'time machine' (default: now)")
+    get_p.add_argument("--archive", action="store_true", help="include archived transactions")
+
     args = parser.parse_args(argv)
     storage = SQLiteAdapter(args.db)
 
     if args.command == "load":
         return _load(storage, args)
+    if args.command == "get":
+        return _get(storage, args)
     return 0
 
 
