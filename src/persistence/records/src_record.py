@@ -9,7 +9,7 @@ class SrcRecord:
     src_id: int
     name: str
     p: float
-    key_label: int
+    key_label: Optional[int]  # None until bootstrapped
     description: Optional[str] = None
 
     @staticmethod

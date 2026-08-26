@@ -9,14 +9,18 @@ from src.domain.entities import (
 from src.domain.enums import Act
 from src.domain.errors import StorageError
 from src.domain.result import Err, Ok
+from src.ports.clock_port import ClockPort
+from src.adapters.system_ports import SystemClock
 
 
 class InMemoryAdapter:
     """In-memory StoragePort implementation for testing."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: ClockPort = None) -> None:
+        self._clock: ClockPort = clock if clock is not None else SystemClock()
+
         self._lbs: Dict[int, Dict] = {}
-        self._lb_names: Dict[str, int] = {}
+        self._lb_names: Dict[Tuple[int, str], int] = {}  # (src_id, name) -> lb_id
         self._lb_seq = 0
 
         self._acts: Dict[int, str] = {}
@@ -70,12 +74,15 @@ class InMemoryAdapter:
 
     # --- String pool operations ---
 
-    def lb_intern(self, name: str) -> Union[Ok[LbId], Err[StorageError]]:
-        if name not in self._lb_names:
+    def lb_intern(self, name: str, src_id: SrcId) -> Union[Ok[LbId], Err[StorageError]]:
+        cache_key = (int(src_id), name)
+        if cache_key not in self._lb_names:
             lb_id = self._next_lb()
-            self._lb_names[name] = lb_id
-            self._lbs[lb_id] = {"lb_id": lb_id, "name": name, "p": 0.5, "description": None}
-        return Ok(LbId(self._lb_names[name]))
+            self._lb_names[cache_key] = lb_id
+            self._lbs[lb_id] = {
+                "lb_id": lb_id, "name": name, "p": 0.5, "src": int(src_id), "description": None,
+            }
+        return Ok(LbId(self._lb_names[cache_key]))
 
     def id_intern(self, value: str) -> Union[Ok[IdId], Err[StorageError]]:
         if value not in self._id_values:
@@ -114,14 +121,14 @@ class InMemoryAdapter:
     # --- Source metadata ---
 
     def src_get_or_create(
-        self, name: str, key_label_id: LbId
+        self, name: str
     ) -> Union[Ok[Src], Err[StorageError]]:
         if name not in self._src_names:
             src_id = self._next_src()
             self._src_names[name] = src_id
             self._srcs[src_id] = {
                 "src_id": src_id, "name": name, "p": 0.5,
-                "key_label": int(key_label_id), "description": None,
+                "key_label": None, "description": None,
             }
         return self.src_get(SrcId(self._src_names[name]))
 
@@ -129,30 +136,41 @@ class InMemoryAdapter:
         data = self._srcs.get(int(src_id))
         if data is None:
             return Err(StorageError(f"src {src_id} not found"))
+        key_label = data["key_label"]
         return Ok(Src(
             src_id=SrcId(data["src_id"]),
             name=data["name"],
             p=data["p"],
-            key_label=LbId(data["key_label"]),
+            key_label=LbId(key_label) if key_label is not None else None,
             description=data["description"],
         ))
 
     def src_update(self, src: Src) -> Union[Ok[None], Err[StorageError]]:
         if int(src.src_id) not in self._srcs:
             return Err(StorageError(f"src {src.src_id} not found"))
+        key_label = int(src.key_label) if src.key_label is not None else None
         self._srcs[int(src.src_id)].update(
-            {"p": src.p, "description": src.description, "key_label": int(src.key_label)}
+            {"p": src.p, "description": src.description, "key_label": key_label}
         )
+        return Ok(None)
+
+    def src_set_key_label(
+        self, src_id: SrcId, lb_id: LbId
+    ) -> Union[Ok[None], Err[StorageError]]:
+        if int(src_id) not in self._srcs:
+            return Err(StorageError(f"src {src_id} not found"))
+        self._srcs[int(src_id)]["key_label"] = int(lb_id)
         return Ok(None)
 
     def src_list(self) -> Union[Ok[List[Src]], Err[StorageError]]:
         result = []
         for data in self._srcs.values():
+            key_label = data["key_label"]
             result.append(Src(
                 src_id=SrcId(data["src_id"]),
                 name=data["name"],
                 p=data["p"],
-                key_label=LbId(data["key_label"]),
+                key_label=LbId(key_label) if key_label is not None else None,
                 description=data["description"],
             ))
         return Ok(result)
@@ -167,6 +185,7 @@ class InMemoryAdapter:
             lb_id=LbId(data["lb_id"]),
             name=data["name"],
             p=data["p"],
+            src=SrcId(data["src"]),
             description=data["description"],
         ))
 
@@ -176,13 +195,16 @@ class InMemoryAdapter:
         self._lbs[int(lb.lb_id)].update({"p": lb.p, "description": lb.description})
         return Ok(None)
 
-    def lb_list(self) -> Union[Ok[List[Lb]], Err[StorageError]]:
+    def lb_list(self, src_id: Optional[SrcId] = None) -> Union[Ok[List[Lb]], Err[StorageError]]:
         result = []
         for data in self._lbs.values():
+            if src_id is not None and data["src"] != int(src_id):
+                continue
             result.append(Lb(
                 lb_id=LbId(data["lb_id"]),
                 name=data["name"],
                 p=data["p"],
+                src=SrcId(data["src"]),
                 description=data["description"],
             ))
         return Ok(result)
@@ -193,17 +215,19 @@ class InMemoryAdapter:
         self, txn: TransactionInput
     ) -> Union[Ok[Transaction], Err[StorageError]]:
         cnt = CntId(self._next_cnt())
+        created_at = self._clock.now()
         row = {
             "cnt": int(cnt), "act": int(txn.act), "dt": txn.dt,
             "src": int(txn.src), "lb": int(txn.lb), "id": int(txn.id),
             "val": int(txn.val),
             "p": txn.p,
+            "created_at": created_at,
         }
         self._transactions.append(row)
         return Ok(Transaction(
             cnt=cnt, act=txn.act, dt=txn.dt,
             src=txn.src, lb=txn.lb, id=txn.id,
-            p=txn.p, val=txn.val,
+            p=txn.p, created_at=created_at, val=txn.val,
         ))
 
     def txn_query(
@@ -231,7 +255,7 @@ class InMemoryAdapter:
             result.append(Transaction(
                 cnt=CntId(row["cnt"]), act=ActId(row["act"]), dt=row["dt"],
                 src=SrcId(row["src"]), lb=LbId(row["lb"]), id=IdId(row["id"]),
-                p=row["p"], val=ValId(row["val"]),
+                p=row["p"], created_at=row["created_at"], val=ValId(row["val"]),
             ))
         return Ok(result)
 
@@ -281,4 +305,3 @@ class InMemoryAdapter:
             (LbId(lb), IdId(id_)): ValId(row["val"])
             for (lb, id_), row in last.items()
         })
-

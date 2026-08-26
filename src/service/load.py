@@ -9,8 +9,8 @@ from src.domain.entities import ActId, IdId, LbId, TransactionInput, ValId
 from src.domain.enums import Act
 from src.domain.errors import StorageError, ValidationError
 from src.domain.result import Err, Ok
-from src.loader import validator as tbl_validator
 from src.ports.storage_port import StoragePort
+from src.service import validate as tbl_validator
 
 
 def _act_id(
@@ -43,22 +43,32 @@ def load(
 
     act_cache: Dict[Act, ActId] = {}
 
-    key_lb_r = storage.lb_intern(cfg.key_label)
+    # Src must exist before its key label can be interned (Lb.src is a required
+    # FK), and Src.key_label can't be set until that label exists -- so the
+    # source is created first with key_label left unset, then bootstrapped.
+    src_r = storage.src_get_or_create(cfg.name)
+    if isinstance(src_r, Err):
+        storage.rollback()
+        return src_r
+    src = src_r.value
+    src_id = src.src_id
+
+    key_lb_r = storage.lb_intern(cfg.key_label, src_id)
     if isinstance(key_lb_r, Err):
         storage.rollback()
         return key_lb_r
 
-    src_r = storage.src_get_or_create(cfg.name, key_lb_r.value)
-    if isinstance(src_r, Err):
-        storage.rollback()
-        return src_r
-    src_id = src_r.value.src_id
+    if src.key_label is None:
+        set_r = storage.src_set_key_label(src_id, key_lb_r.value)
+        if isinstance(set_r, Err):
+            storage.rollback()
+            return set_r
 
     lb_ids: Dict[str, LbId] = {cfg.key_label: key_lb_r.value}
     for col in data:
         if col == cfg.key_label:
             continue
-        lb_r = storage.lb_intern(col)
+        lb_r = storage.lb_intern(col, src_id)
         if isinstance(lb_r, Err):
             storage.rollback()
             return lb_r

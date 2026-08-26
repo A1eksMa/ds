@@ -1,4 +1,4 @@
-from src.domain.entities import Lb, LbId
+from src.domain.entities import Lb, LbId, SrcId
 from src.domain.errors import ValidationError
 from src.domain.result import Err, Ok
 from src.persistence.mappers import lb_mapper
@@ -6,7 +6,7 @@ from src.persistence.records.lb_record import LbRecord
 
 
 def _record(**kwargs) -> LbRecord:
-    defaults = dict(lb_id=1, name="email", p=0.5, description=None)
+    defaults = dict(lb_id=1, name="email", p=0.5, src=10, description=None)
     return LbRecord(**{**defaults, **kwargs})
 
 
@@ -17,6 +17,7 @@ def test_record_to_domain_ok():
     assert lb.lb_id == LbId(1)
     assert lb.name == "email"
     assert lb.p == 0.5
+    assert lb.src == SrcId(10)
 
 
 def test_record_to_domain_with_description():
@@ -44,9 +45,10 @@ def test_domain_to_record_round_trip():
 
 
 def test_domain_to_record_preserves_all_fields():
-    lb = Lb(lb_id=LbId(5), name="phone", p=0.8, description="Phone")
+    lb = Lb(lb_id=LbId(5), name="phone", p=0.8, src=SrcId(10), description="Phone")
     record = lb_mapper.domain_to_record(lb)
     assert record.lb_id == 5
     assert record.name == "phone"
     assert record.p == 0.8
+    assert record.src == 10
     assert record.description == "Phone"

@@ -22,6 +22,7 @@ def record_to_domain(record: TransactionRecord) -> Union[Ok[Transaction], Err[Va
         lb=LbId(record.lb),
         id=IdId(record.id),
         p=record.p,
+        created_at=record.created_at,
         val=ValId(record.val),
     ))
 
@@ -35,11 +36,12 @@ def domain_to_record(txn: Transaction) -> TransactionRecord:
         lb=int(txn.lb),
         id=int(txn.id),
         p=txn.p,
+        created_at=txn.created_at,
         val=int(txn.val),
     )
 
 
-def input_to_row(txn: TransactionInput, cnt: CntId) -> TransactionRecord:
+def input_to_row(txn: TransactionInput, cnt: CntId, created_at: float) -> TransactionRecord:
     return TransactionRecord(
         cnt=int(cnt),
         act=int(txn.act),
@@ -48,5 +50,6 @@ def input_to_row(txn: TransactionInput, cnt: CntId) -> TransactionRecord:
         lb=int(txn.lb),
         id=int(txn.id),
         p=txn.p,
+        created_at=created_at,
         val=int(txn.val),
     )

@@ -9,6 +9,7 @@ class LbRecord:
     lb_id: int
     name: str
     p: float
+    src: int
     description: Optional[str] = None
 
     @staticmethod
@@ -18,4 +19,5 @@ class LbRecord:
             name=row[1],
             description=row[2],
             p=row[3],
+            src=row[4],
         )

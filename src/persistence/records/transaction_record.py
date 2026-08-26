@@ -13,6 +13,7 @@ class TransactionRecord:
     lb: int
     id: int
     p: float
+    created_at: float
     val: int = 0  # 0 = no value (DELETE semantics); val_id is AUTOINCREMENT from 1
 
     @staticmethod
@@ -26,4 +27,5 @@ class TransactionRecord:
             id=row[5],
             val=row[6] or 0,  # NULL from SQLite → 0 (DELETE sentinel)
             p=row[7],
+            created_at=row[8],
         )

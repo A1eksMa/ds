@@ -21,6 +21,12 @@ def test_record_to_domain_ok():
     assert src.description is None
 
 
+def test_record_to_domain_key_label_none_before_bootstrap():
+    result = src_mapper.record_to_domain(_record(key_label=None))
+    assert isinstance(result, Ok)
+    assert result.value.key_label is None
+
+
 def test_record_to_domain_with_description():
     result = src_mapper.record_to_domain(_record(description="Customer system"))
     assert isinstance(result, Ok)
@@ -50,6 +56,13 @@ def test_record_to_domain_p_below_zero_returns_err():
 
 def test_domain_to_record_round_trip():
     record = _record(description="ERP")
+    src = src_mapper.record_to_domain(record).value
+    back = src_mapper.domain_to_record(src)
+    assert back == record
+
+
+def test_domain_to_record_round_trip_key_label_none():
+    record = _record(key_label=None)
     src = src_mapper.record_to_domain(record).value
     back = src_mapper.domain_to_record(src)
     assert back == record

@@ -14,16 +14,11 @@ from src.persistence.mappers import lb_mapper, src_mapper, transaction_mapper
 from src.persistence.records.lb_record import LbRecord
 from src.persistence.records.src_record import SrcRecord
 from src.persistence.records.transaction_record import TransactionRecord
+from src.ports.clock_port import ClockPort
+from src.adapters.system_ports import SystemClock
 
 _SCHEMA = """
 PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS lbs (
-    lb_id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT    UNIQUE NOT NULL,
-    description TEXT,
-    p           REAL    NOT NULL DEFAULT 0.5
-);
 
 CREATE TABLE IF NOT EXISTS acts (
     act_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,8 +30,18 @@ CREATE TABLE IF NOT EXISTS srcs (
     name        TEXT    UNIQUE NOT NULL,
     description TEXT,
     p           REAL    NOT NULL DEFAULT 0.5,
-    key_label   INTEGER NOT NULL,
+    key_label   INTEGER,                        -- NULL until bootstrapped (see src_set_key_label)
     FOREIGN KEY (key_label) REFERENCES lbs(lb_id)
+);
+
+CREATE TABLE IF NOT EXISTS lbs (
+    lb_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    description TEXT,
+    p           REAL    NOT NULL DEFAULT 0.5,
+    src_id      INTEGER NOT NULL,                -- labels are source-specific
+    UNIQUE (src_id, name),
+    FOREIGN KEY (src_id) REFERENCES srcs(src_id) ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS ids (
@@ -51,7 +56,7 @@ CREATE TABLE IF NOT EXISTS vals (
 
 CREATE TABLE IF NOT EXISTS cnts (
     cnt_id     INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at REAL    NOT NULL DEFAULT (julianday('now'))
+    created_at REAL    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -63,6 +68,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     id  INTEGER NOT NULL,
     val INTEGER,
     p   REAL    NOT NULL DEFAULT 1.0,
+    created_at REAL NOT NULL,          -- when the record was physically inserted (distinct from dt)
     FOREIGN KEY (cnt) REFERENCES cnts(cnt_id)        ON DELETE RESTRICT,
     FOREIGN KEY (act) REFERENCES acts(act_id)        ON DELETE RESTRICT,
     FOREIGN KEY (src) REFERENCES srcs(src_id)        ON DELETE RESTRICT,
@@ -80,6 +86,7 @@ CREATE TABLE IF NOT EXISTS transactions_archive (
     id  INTEGER NOT NULL,
     val INTEGER,
     p   REAL    NOT NULL DEFAULT 1.0,
+    created_at REAL NOT NULL,
     FOREIGN KEY (cnt) REFERENCES cnts(cnt_id)        ON DELETE RESTRICT,
     FOREIGN KEY (act) REFERENCES acts(act_id)        ON DELETE RESTRICT,
     FOREIGN KEY (src) REFERENCES srcs(src_id)        ON DELETE RESTRICT,
@@ -109,14 +116,15 @@ def _chunks(values: List[int], size: int) -> List[List[int]]:
 
 
 class SQLiteAdapter:
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, clock: ClockPort = None) -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._conn.isolation_level = None  # autocommit; transactions managed explicitly
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._lb_cache: Dict[str, int] = {}
+        self._clock: ClockPort = clock if clock is not None else SystemClock()
+        self._lb_cache: Dict[Tuple[int, str], int] = {}
         self._act_cache: Dict[str, int] = {}
         self._src_cache: Dict[str, int] = {}
         self._id_cache: Dict[str, int] = {}
@@ -124,8 +132,8 @@ class SQLiteAdapter:
         self._load_small_pools()
 
     def _load_small_pools(self) -> None:
-        for row in self._conn.execute("SELECT name, lb_id FROM lbs"):
-            self._lb_cache[row[0]] = row[1]
+        for row in self._conn.execute("SELECT src_id, name, lb_id FROM lbs"):
+            self._lb_cache[(row[0], row[1])] = row[2]
         for row in self._conn.execute("SELECT name, act_id FROM acts"):
             self._act_cache[row[0]] = row[1]
         for row in self._conn.execute("SELECT name, src_id FROM srcs"):
@@ -144,18 +152,19 @@ class SQLiteAdapter:
     def rollback(self) -> None:
         self._conn.rollback()
 
-    def lb_intern(self, name: str) -> Union[Ok[LbId], Err[StorageError]]:
+    def lb_intern(self, name: str, src_id: SrcId) -> Union[Ok[LbId], Err[StorageError]]:
         try:
-            if name in self._lb_cache:
-                return Ok(LbId(self._lb_cache[name]))
+            cache_key = (int(src_id), name)
+            if cache_key in self._lb_cache:
+                return Ok(LbId(self._lb_cache[cache_key]))
             self._conn.execute(
-                "INSERT OR IGNORE INTO lbs (name) VALUES (?)", (name,)
+                "INSERT OR IGNORE INTO lbs (name, src_id) VALUES (?, ?)", (name, int(src_id))
             )
             row = self._conn.execute(
-                "SELECT lb_id FROM lbs WHERE name = ?", (name,)
+                "SELECT lb_id FROM lbs WHERE name = ? AND src_id = ?", (name, int(src_id))
             ).fetchone()
             lb_id = row[0]
-            self._lb_cache[name] = lb_id
+            self._lb_cache[cache_key] = lb_id
             return Ok(LbId(lb_id))
         except sqlite3.Error as exc:
             return Err(StorageError(str(exc)))
@@ -234,14 +243,14 @@ class SQLiteAdapter:
     # --- Source metadata ---
 
     def src_get_or_create(
-        self, name: str, key_label_id: LbId
+        self, name: str
     ) -> Union[Ok[Src], Err[StorageError]]:
         try:
             if name in self._src_cache:
                 return self.src_get(SrcId(self._src_cache[name]))
             self._conn.execute(
-                "INSERT OR IGNORE INTO srcs (name, key_label) VALUES (?, ?)",
-                (name, int(key_label_id)),
+                "INSERT OR IGNORE INTO srcs (name) VALUES (?)",
+                (name,),
             )
             row = self._conn.execute(
                 "SELECT src_id, name, description, p, key_label FROM srcs WHERE name = ?",
@@ -273,9 +282,23 @@ class SQLiteAdapter:
 
     def src_update(self, src: Src) -> Union[Ok[None], Err[StorageError]]:
         try:
+            key_label = int(src.key_label) if src.key_label is not None else None
             self._conn.execute(
                 "UPDATE srcs SET description = ?, p = ?, key_label = ? WHERE src_id = ?",
-                (src.description, src.p, int(src.key_label), int(src.src_id)),
+                (src.description, src.p, key_label, int(src.src_id)),
+            )
+            self._conn.commit()  # standalone call — commit immediately
+            return Ok(None)
+        except sqlite3.Error as exc:
+            return Err(StorageError(str(exc)))
+
+    def src_set_key_label(
+        self, src_id: SrcId, lb_id: LbId
+    ) -> Union[Ok[None], Err[StorageError]]:
+        try:
+            self._conn.execute(
+                "UPDATE srcs SET key_label = ? WHERE src_id = ?",
+                (int(lb_id), int(src_id)),
             )
             self._conn.commit()  # standalone call — commit immediately
             return Ok(None)
@@ -302,7 +325,7 @@ class SQLiteAdapter:
     def lb_get(self, lb_id: LbId) -> Union[Ok[Lb], Err[StorageError]]:
         try:
             row = self._conn.execute(
-                "SELECT lb_id, name, description, p FROM lbs WHERE lb_id = ?",
+                "SELECT lb_id, name, description, p, src_id FROM lbs WHERE lb_id = ?",
                 (int(lb_id),),
             ).fetchone()
             if row is None:
@@ -325,11 +348,17 @@ class SQLiteAdapter:
         except sqlite3.Error as exc:
             return Err(StorageError(str(exc)))
 
-    def lb_list(self) -> Union[Ok[List[Lb]], Err[StorageError]]:
+    def lb_list(self, src_id: Optional[SrcId] = None) -> Union[Ok[List[Lb]], Err[StorageError]]:
         try:
-            rows = self._conn.execute(
-                "SELECT lb_id, name, description, p FROM lbs"
-            ).fetchall()
+            if src_id is not None:
+                rows = self._conn.execute(
+                    "SELECT lb_id, name, description, p, src_id FROM lbs WHERE src_id = ?",
+                    (int(src_id),),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT lb_id, name, description, p, src_id FROM lbs"
+                ).fetchall()
             result: List[Lb] = []
             for row in rows:
                 mapped = lb_mapper.record_to_domain(LbRecord.from_row(row))
@@ -346,11 +375,12 @@ class SQLiteAdapter:
         self, txn: TransactionInput
     ) -> Union[Ok[Transaction], Err[StorageError]]:
         try:
-            cur = self._conn.execute("INSERT INTO cnts (created_at) VALUES (julianday('now'))")
+            created_at = self._clock.now()
+            cur = self._conn.execute("INSERT INTO cnts (created_at) VALUES (?)", (created_at,))
             cnt_id = cur.lastrowid
             self._conn.execute(
-                "INSERT INTO transactions (cnt, act, dt, src, lb, id, val, p) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO transactions (cnt, act, dt, src, lb, id, val, p, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     cnt_id,
                     int(txn.act),
@@ -360,6 +390,7 @@ class SQLiteAdapter:
                     int(txn.id),
                     int(txn.val) or None,  # 0 → NULL in SQLite (DELETE semantics)
                     txn.p,
+                    created_at,
                 ),
             )
             result = transaction_mapper.record_to_domain(
@@ -371,6 +402,7 @@ class SQLiteAdapter:
                     lb=int(txn.lb),
                     id=int(txn.id),
                     p=txn.p,
+                    created_at=created_at,
                     val=int(txn.val) or None,  # 0 → NULL in SQLite (DELETE semantics)
                 )
             )
@@ -410,7 +442,7 @@ class SQLiteAdapter:
                 params.append(int(from_cnt))
             where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
             rows = self._conn.execute(
-                f"SELECT cnt, act, dt, src, lb, id, val, p FROM {table} {where} ORDER BY cnt",
+                f"SELECT cnt, act, dt, src, lb, id, val, p, created_at FROM {table} {where} ORDER BY cnt",
                 params,
             ).fetchall()
             result: List[Transaction] = []
@@ -428,7 +460,7 @@ class SQLiteAdapter:
             self._conn.execute("BEGIN")
             cur = self._conn.execute(
                 "INSERT INTO transactions_archive "
-                "SELECT cnt, act, dt, src, lb, id, val, p "
+                "SELECT cnt, act, dt, src, lb, id, val, p, created_at "
                 "FROM transactions WHERE dt <= ?",
                 (until_dt,),
             )

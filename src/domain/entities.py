@@ -17,7 +17,7 @@ class Src:
     src_id: SrcId
     name: str
     p: float
-    key_label: LbId
+    key_label: Optional[LbId]  # None until the key label is bootstrapped (see StoragePort.src_set_key_label)
     description: Optional[str] = None
 
 
@@ -26,13 +26,14 @@ class Lb:
     lb_id: LbId
     name: str
     p: float
+    src: SrcId  # labels are source-specific: same name in two sources is not the same label
     description: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class TransactionInput:
     """Fields supplied by the caller when inserting a new transaction.
-    The storage layer generates cnt internally."""
+    The storage layer generates cnt and created_at internally."""
     act: ActId
     dt: float
     src: SrcId
@@ -44,7 +45,7 @@ class TransactionInput:
 
 @dataclass(frozen=True)
 class Transaction:
-    """Full transaction record as stored in DB (cnt is assigned by storage)."""
+    """Full transaction record as stored in DB (cnt and created_at are assigned by storage)."""
     cnt: CntId
     act: ActId
     dt: float
@@ -52,6 +53,5 @@ class Transaction:
     lb: LbId
     id: IdId
     p: float
+    created_at: float  # when the record was physically inserted (distinct from dt, the business timestamp)
     val: ValId = ValId(0)  # 0 = DELETE semantics
-
-

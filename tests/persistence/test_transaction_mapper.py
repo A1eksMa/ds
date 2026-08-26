@@ -7,10 +7,11 @@ from src.persistence.mappers import transaction_mapper
 from src.persistence.records.transaction_record import TransactionRecord
 
 _TS = 1_700_000_000.0
+_CREATED_AT = 1_700_000_050.0
 
 
 def _record(**kwargs) -> TransactionRecord:
-    defaults = dict(cnt=1, act=1, dt=_TS, src=2, lb=3, id=4, p=1.0, val=5)
+    defaults = dict(cnt=1, act=1, dt=_TS, src=2, lb=3, id=4, p=1.0, created_at=_CREATED_AT, val=5)
     return TransactionRecord(**{**defaults, **kwargs})
 
 
@@ -25,6 +26,7 @@ def test_record_to_domain_ok():
     assert txn.lb == LbId(3)
     assert txn.id == IdId(4)
     assert txn.p == 1.0
+    assert txn.created_at == _CREATED_AT
     assert txn.val == ValId(5)
 
 
@@ -54,16 +56,17 @@ def test_domain_to_record_val_none():
     assert back.val == ValId(0)
 
 
-def test_input_to_row_fills_cnt():
+def test_input_to_row_fills_cnt_and_created_at():
     txn_input = TransactionInput(
         act=ActId(1), dt=_TS, src=SrcId(2),
         lb=LbId(3), id=IdId(4), p=0.9, val=ValId(5),
     )
-    row = transaction_mapper.input_to_row(txn_input, CntId(99))
+    row = transaction_mapper.input_to_row(txn_input, CntId(99), _CREATED_AT)
     assert row.cnt == 99
     assert row.act == 1
     assert row.src == 2
     assert row.val == 5
+    assert row.created_at == _CREATED_AT
 
 
 def test_input_to_row_delete_semantics():
@@ -71,5 +74,5 @@ def test_input_to_row_delete_semantics():
         act=ActId(4), dt=_TS, src=SrcId(1),
         lb=LbId(1), id=IdId(1), p=1.0, val=ValId(0),
     )
-    row = transaction_mapper.input_to_row(txn_input, CntId(10))
+    row = transaction_mapper.input_to_row(txn_input, CntId(10), _CREATED_AT)
     assert row.val == ValId(0)

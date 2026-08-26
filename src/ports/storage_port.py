@@ -23,7 +23,7 @@ class StoragePort(Protocol):
     # Intern a string into the corresponding pool table; return its integer ID.
     # Creates the entry if it does not exist yet.
 
-    def lb_intern(self, name: str) -> Union[Ok[LbId], Err[StorageError]]: ...
+    def lb_intern(self, name: str, src_id: SrcId) -> Union[Ok[LbId], Err[StorageError]]: ...
 
     def id_intern(self, value: str) -> Union[Ok[IdId], Err[StorageError]]: ...
 
@@ -38,7 +38,7 @@ class StoragePort(Protocol):
     # --- Source metadata ---
 
     def src_get_or_create(
-        self, name: str, key_label_id: LbId
+        self, name: str
     ) -> Union[Ok[Src], Err[StorageError]]: ...
 
     def src_get(self, src_id: SrcId) -> Union[Ok[Src], Err[StorageError]]: ...
@@ -47,13 +47,20 @@ class StoragePort(Protocol):
 
     def src_list(self) -> Union[Ok[List[Src]], Err[StorageError]]: ...
 
+    # Bootstraps Src.key_label once the key label's Lb row exists (see the
+    # Src/Lb creation-order note on lb_intern: a source's key label cannot be
+    # interned until its src_id exists, so key_label starts out None).
+    def src_set_key_label(
+        self, src_id: SrcId, lb_id: LbId
+    ) -> Union[Ok[None], Err[StorageError]]: ...
+
     # --- Label metadata ---
 
     def lb_get(self, lb_id: LbId) -> Union[Ok[Lb], Err[StorageError]]: ...
 
     def lb_update(self, lb: Lb) -> Union[Ok[None], Err[StorageError]]: ...
 
-    def lb_list(self) -> Union[Ok[List[Lb]], Err[StorageError]]: ...
+    def lb_list(self, src_id: Optional[SrcId] = None) -> Union[Ok[List[Lb]], Err[StorageError]]: ...
 
     # --- Transactions ---
 

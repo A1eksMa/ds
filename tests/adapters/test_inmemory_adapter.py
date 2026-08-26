@@ -14,23 +14,38 @@ def db() -> InMemoryAdapter:
     return InMemoryAdapter()
 
 
+def _src(db, name="S") -> SrcId:
+    return db.src_get_or_create(name).value.src_id
+
+
 # --- String pool operations ---
 
 def test_lb_intern_creates_entry(db):
-    result = db.lb_intern("email")
+    src = _src(db)
+    result = db.lb_intern("email", src)
     assert isinstance(result, Ok)
     assert isinstance(result.value, int)
 
 
 def test_lb_intern_returns_same_id_on_repeat(db):
-    first = db.lb_intern("email").value
-    second = db.lb_intern("email").value
+    src = _src(db)
+    first = db.lb_intern("email", src).value
+    second = db.lb_intern("email", src).value
     assert first == second
 
 
 def test_lb_intern_different_names_get_different_ids(db):
-    a = db.lb_intern("email").value
-    b = db.lb_intern("phone").value
+    src = _src(db)
+    a = db.lb_intern("email", src).value
+    b = db.lb_intern("phone", src).value
+    assert a != b
+
+
+def test_lb_intern_same_name_different_sources_get_different_ids(db):
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    a = db.lb_intern("email", src_a).value
+    b = db.lb_intern("email", src_b).value
     assert a != b
 
 
@@ -73,19 +88,17 @@ def test_act_intern_different_acts_get_different_ids(db):
 # --- Source metadata ---
 
 def test_src_get_or_create_creates_source(db):
-    lb_id = db.lb_intern("customer_id").value
-    result = db.src_get_or_create("CRM", lb_id)
+    result = db.src_get_or_create("CRM")
     assert isinstance(result, Ok)
     src = result.value
     assert src.name == "CRM"
-    assert src.key_label == lb_id
+    assert src.key_label is None
     assert src.p == 0.5
 
 
 def test_src_get_or_create_idempotent(db):
-    lb_id = db.lb_intern("customer_id").value
-    first = db.src_get_or_create("CRM", lb_id).value
-    second = db.src_get_or_create("CRM", lb_id).value
+    first = db.src_get_or_create("CRM").value
+    second = db.src_get_or_create("CRM").value
     assert first.src_id == second.src_id
 
 
@@ -95,9 +108,17 @@ def test_src_get_not_found(db):
     assert isinstance(result.error, StorageError)
 
 
+def test_src_set_key_label_bootstraps_key_label(db):
+    src = db.src_get_or_create("CRM").value
+    lb_id = db.lb_intern("customer_id", src.src_id).value
+    result = db.src_set_key_label(src.src_id, lb_id)
+    assert isinstance(result, Ok)
+    refreshed = db.src_get(src.src_id).value
+    assert refreshed.key_label == lb_id
+
+
 def test_src_update_changes_p_and_description(db):
-    lb_id = db.lb_intern("id").value
-    src = db.src_get_or_create("ERP", lb_id).value
+    src = db.src_get_or_create("ERP").value
     updated = Src(src_id=src.src_id, name=src.name, p=0.95, key_label=src.key_label, description="ERP system")
     db.src_update(updated)
     refreshed = db.src_get(src.src_id).value
@@ -106,9 +127,8 @@ def test_src_update_changes_p_and_description(db):
 
 
 def test_src_list_returns_all_sources(db):
-    lb_id = db.lb_intern("id").value
-    db.src_get_or_create("CRM", lb_id)
-    db.src_get_or_create("ERP", lb_id)
+    db.src_get_or_create("CRM")
+    db.src_get_or_create("ERP")
     result = db.src_list()
     assert isinstance(result, Ok)
     names = {s.name for s in result.value}
@@ -118,10 +138,12 @@ def test_src_list_returns_all_sources(db):
 # --- Label metadata ---
 
 def test_lb_get_returns_label(db):
-    lb_id = db.lb_intern("email").value
+    src = _src(db)
+    lb_id = db.lb_intern("email", src).value
     result = db.lb_get(lb_id)
     assert isinstance(result, Ok)
     assert result.value.name == "email"
+    assert result.value.src == src
 
 
 def test_lb_get_not_found(db):
@@ -131,9 +153,10 @@ def test_lb_get_not_found(db):
 
 def test_lb_update_changes_p_and_description(db):
     from src.domain.entities import Lb
-    lb_id = db.lb_intern("price").value
+    src = _src(db)
+    lb_id = db.lb_intern("price", src).value
     lb = db.lb_get(lb_id).value
-    updated = Lb(lb_id=lb.lb_id, name=lb.name, p=0.95, description="Unit price")
+    updated = Lb(lb_id=lb.lb_id, name=lb.name, p=0.95, src=lb.src, description="Unit price")
     db.lb_update(updated)
     refreshed = db.lb_get(lb_id).value
     assert refreshed.p == 0.95
@@ -141,12 +164,25 @@ def test_lb_update_changes_p_and_description(db):
 
 
 def test_lb_list_returns_all_labels(db):
-    db.lb_intern("email")
-    db.lb_intern("phone")
+    src = _src(db)
+    db.lb_intern("email", src)
+    db.lb_intern("phone", src)
     result = db.lb_list()
     assert isinstance(result, Ok)
     names = {lb.name for lb in result.value}
     assert {"email", "phone"}.issubset(names)
+
+
+def test_lb_list_filters_by_src(db):
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    db.lb_intern("email", src_a)
+    db.lb_intern("phone", src_b)
+
+    result = db.lb_list(src_id=src_a)
+    assert isinstance(result, Ok)
+    names = {lb.name for lb in result.value}
+    assert names == {"email"}
 
 
 # --- Transactions ---
@@ -159,8 +195,8 @@ def _insert(db, src_id, lb_id, id_id, val_id, act_id, dt=_TS, p=1.0):
 
 
 def test_txn_insert_returns_transaction_with_cnt(db):
-    lb_id = db.lb_intern("email").value
-    src_id = db.src_get_or_create("CRM", lb_id).value.src_id
+    src_id = _src(db, "CRM")
+    lb_id = db.lb_intern("email", src_id).value
     act_id = db.act_intern(Act.POST).value
     id_id = db.id_intern("1").value
     val_id = db.val_intern("a@b.com").value
@@ -174,9 +210,20 @@ def test_txn_insert_returns_transaction_with_cnt(db):
     assert txn.val == val_id
 
 
+def test_txn_insert_populates_created_at(db):
+    src_id = _src(db, "CRM")
+    lb_id = db.lb_intern("email", src_id).value
+    act_id = db.act_intern(Act.POST).value
+    id_id = db.id_intern("1").value
+    val_id = db.val_intern("a@b.com").value
+
+    txn = _insert(db, src_id, lb_id, id_id, val_id, act_id).value
+    assert txn.created_at is not None
+
+
 def test_txn_insert_increments_cnt(db):
-    lb_id = db.lb_intern("x").value
-    src_id = db.src_get_or_create("S", lb_id).value.src_id
+    src_id = _src(db)
+    lb_id = db.lb_intern("x", src_id).value
     act_id = db.act_intern(Act.POST).value
     id_id = db.id_intern("1").value
     val_id = db.val_intern("v").value
@@ -187,8 +234,8 @@ def test_txn_insert_increments_cnt(db):
 
 
 def test_txn_query_returns_all(db):
-    lb_id = db.lb_intern("x").value
-    src_id = db.src_get_or_create("S", lb_id).value.src_id
+    src_id = _src(db)
+    lb_id = db.lb_intern("x", src_id).value
     act_id = db.act_intern(Act.POST).value
     id_id = db.id_intern("1").value
     val_id = db.val_intern("v").value
@@ -202,9 +249,9 @@ def test_txn_query_returns_all(db):
 
 
 def test_txn_query_filters_by_src(db):
-    lb = db.lb_intern("x").value
-    src_a = db.src_get_or_create("A", lb).value.src_id
-    src_b = db.src_get_or_create("B", lb).value.src_id
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    lb = db.lb_intern("x", src_a).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("v").value
@@ -219,8 +266,8 @@ def test_txn_query_filters_by_src(db):
 
 
 def test_txn_query_filters_by_until_dt(db):
-    lb = db.lb_intern("x").value
-    src = db.src_get_or_create("S", lb).value.src_id
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("v").value
@@ -235,8 +282,8 @@ def test_txn_query_filters_by_until_dt(db):
 
 
 def test_txn_query_filters_by_from_cnt(db):
-    lb = db.lb_intern("x").value
-    src = db.src_get_or_create("S", lb).value.src_id
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("v").value
@@ -252,8 +299,8 @@ def test_txn_query_filters_by_from_cnt(db):
 
 
 def test_txn_query_val_none_delete_semantics(db):
-    lb = db.lb_intern("x").value
-    src = db.src_get_or_create("S", lb).value.src_id
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
     act = db.act_intern(Act.DELETE).value
     id_ = db.id_intern("1").value
 
@@ -264,8 +311,8 @@ def test_txn_query_val_none_delete_semantics(db):
 
 
 def test_txn_archive_moves_records(db):
-    lb = db.lb_intern("x").value
-    src = db.src_get_or_create("S", lb).value.src_id
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("v").value
@@ -286,8 +333,8 @@ def test_txn_archive_moves_records(db):
 
 
 def test_txn_delete_by_src(db):
-    lb = db.lb_intern("x").value
-    src = db.src_get_or_create("S", lb).value.src_id
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("v").value
@@ -300,9 +347,9 @@ def test_txn_delete_by_src(db):
 
 
 def test_txn_delete_by_src_and_lb(db):
-    lb_a = db.lb_intern("a").value
-    lb_b = db.lb_intern("b").value
-    src = db.src_get_or_create("S", lb_a).value.src_id
+    src = _src(db)
+    lb_a = db.lb_intern("a", src).value
+    lb_b = db.lb_intern("b", src).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("v").value
@@ -320,8 +367,8 @@ def test_txn_delete_by_src_and_lb(db):
 # --- txn_last_values ---
 
 def test_txn_last_values_empty_when_no_history(db):
-    lb = db.lb_intern("email").value
-    src = db.src_get_or_create("CRM", lb).value.src_id
+    src = _src(db, "CRM")
+    lb = db.lb_intern("email", src).value
     id_ = db.id_intern("1").value
 
     result = db.txn_last_values(src, [lb], [id_])
@@ -330,8 +377,8 @@ def test_txn_last_values_empty_when_no_history(db):
 
 
 def test_txn_last_values_returns_most_recent(db):
-    lb = db.lb_intern("email").value
-    src = db.src_get_or_create("CRM", lb).value.src_id
+    src = _src(db, "CRM")
+    lb = db.lb_intern("email", src).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     v1 = db.val_intern("a@b.com").value
@@ -346,8 +393,8 @@ def test_txn_last_values_returns_most_recent(db):
 
 
 def test_txn_last_values_reflects_delete(db):
-    lb = db.lb_intern("email").value
-    src = db.src_get_or_create("CRM", lb).value.src_id
+    src = _src(db, "CRM")
+    lb = db.lb_intern("email", src).value
     act = db.act_intern(Act.DELETE).value
     id_ = db.id_intern("1").value
 
@@ -359,8 +406,8 @@ def test_txn_last_values_reflects_delete(db):
 
 
 def test_txn_last_values_includes_archived(db):
-    lb = db.lb_intern("email").value
-    src = db.src_get_or_create("CRM", lb).value.src_id
+    src = _src(db, "CRM")
+    lb = db.lb_intern("email", src).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("a@b.com").value
@@ -374,9 +421,9 @@ def test_txn_last_values_includes_archived(db):
 
 
 def test_txn_last_values_filters_by_src(db):
-    lb = db.lb_intern("email").value
-    src_a = db.src_get_or_create("A", lb).value.src_id
-    src_b = db.src_get_or_create("B", lb).value.src_id
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    lb = db.lb_intern("email", src_a).value
     act = db.act_intern(Act.POST).value
     id_ = db.id_intern("1").value
     val = db.val_intern("a@b.com").value
@@ -389,11 +436,9 @@ def test_txn_last_values_filters_by_src(db):
 
 
 def test_txn_last_values_empty_id_list_returns_empty(db):
-    lb = db.lb_intern("email").value
-    src = db.src_get_or_create("CRM", lb).value.src_id
+    src = _src(db, "CRM")
+    lb = db.lb_intern("email", src).value
 
     result = db.txn_last_values(src, [lb], [])
     assert isinstance(result, Ok)
     assert result.value == {}
-
-
