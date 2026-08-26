@@ -1,6 +1,6 @@
 [project]
 name = "data-sources"
-version = "0.4.0a1"
+version = "0.5.0a1"
 requires-python = ">=3.9"
 dependencies = []
 

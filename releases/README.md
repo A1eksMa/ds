@@ -19,6 +19,35 @@ tar -xzf ds-0.2.0a1.tar.gz -C ./ds-0.2.0a1
 
 ---
 
+## 0.5.0a1 — `ds-0.5.0a1.tar.gz`
+
+Откат к ядру: три папки уровня Level 1 (`loader/`, `processing/`, `api/`) объединены в один
+пакет `src/service/`, и в схему БД внесены две правки из `TODO.md`, накопившиеся до того, как
+Level 1 продвинулся дальше.
+
+- `src/loader/`, `src/processing/`, `src/api/` удалены целиком — вместе с ними ушли
+  `fold_state()`/`build_state()` (Processing Engine Level 1) и `build_export()`/
+  `export_state_file()` (Core API), а с ними и CLI-команда `ds get` из 0.4.0a1. Они основаны на
+  старой схеме (`cnt`-only коллизии, метки без привязки к источнику) и будут переписаны заново
+  поверх новой схемы — решили не патчить дважды.
+- Новый `src/service/`: `load.py` (объединяет прежние `loader/json_loader.py` и
+  `api/service.py::load`/`load_file`) и `validate.py` (перенесён без изменений). CLI
+  (`src/cli/commands.py`) сохраняет только команду `load` — это рабочий прообраз новой структуры,
+  один модуль на функцию вместо трёх параллельных папок.
+- `TODO.md` #2: `Transaction`/`transactions` получили поле `created_at` — технический timestamp
+  физической вставки записи, отдельно от бизнесового `dt`. Генерируется один раз на стороне
+  Python через `ClockPort` (не читается обратно из БД через `julianday('now')`).
+- `TODO.md` #4: `Lb` теперь специфична для источника — `lbs` уникальна по `(src_id, name)`, а не
+  только по `name`. `Src.key_label` стал nullable, чтобы разорвать цикл создания `Src`↔`Lb`:
+  источник создаётся первым с пустым `key_label`, затем интернируется его ключевая метка (уже с
+  `src_id`), затем `key_label` дозаписывается новым методом `StoragePort.src_set_key_label()`.
+- `TODO.md` #3 (сортировка `fold_state` по `(dt, cnt)`) сознательно отложена вместе с остальным
+  Level 1 — сейчас его просто нет в коде, переделывать нечего.
+- `docs/loader.md` обновлён под новую схему и структуру модулей; `docs/get.md` устарел
+  (описывает удалённую команду) и будет пересмотрен отдельно.
+- Тесты: 180 (без учёта удалённых `tests/loader/`, `tests/processing/`, `tests/api/` и
+  get-тестов из `tests/cli/test_commands.py`), все проходят через `run_tests.sh`.
+
 ## 0.4.0a1 — `ds-0.4.0a1.tar.gz`
 
 - Новая CLI-команда `ds get <out.json> [--src NAME] [--lb NAME] [--dt TS] [--archive]` —
