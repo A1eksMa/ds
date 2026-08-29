@@ -1,0 +1,6 @@
+cnt | act | dt | src | lb | id | val
+------------------------------------
+1 | PATCH | 1704067200.0 | CRM | email | 101 | alice@example.com
+2 | PATCH | 1704067200.0 | CRM | email | 102 | bob@example.com
+3 | POST | 1706745600.0 | CRM | email | 102 | bob.updated@example.com
+4 | PATCH | 1706745600.0 | CRM | email | 103 | carol@example.com

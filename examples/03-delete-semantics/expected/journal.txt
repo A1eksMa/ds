@@ -1,0 +1,6 @@
+cnt | act | dt | src | lb | id | val
+------------------------------------
+1 | PATCH | 1704067200.0 | CRM | email | 101 | alice@example.com
+2 | PATCH | 1704067200.0 | CRM | phone | 101 | +7-900-000-0001
+3 | DELETE | 1705276800.0 | CRM | phone | 101 | <null>
+4 | PATCH | 1706745600.0 | CRM | phone | 101 | +7-900-000-9999

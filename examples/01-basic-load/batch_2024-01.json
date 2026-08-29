@@ -1,0 +1,5 @@
+{
+  "customer_id": ["101", "102", "103"],
+  "email":       ["alice@example.com", "bob@example.com", "carol@example.com"],
+  "phone":       ["+7-900-000-0001", "+7-900-000-0002", null]
+}

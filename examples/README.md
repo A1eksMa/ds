@@ -1,0 +1,43 @@
+# Примеры использования `ds`
+
+Каждая папка — самодостаточный сценарий: фикстуры (`source.json`, файлы данных) + `run.sh`,
+который прогоняет `ds` на них, + `expected/` с эталонным результатом.
+
+Примеры служат трём целям:
+1. **обучение** — посмотреть на живой сценарий и повторить;
+2. **регрессионные тесты** — `tests/examples/test_examples.py` прогоняет каждый `run.sh` и
+   сверяет вывод с `expected/`;
+3. **основа для будущих тестов** — когда появится `ds get` / свёртка, `expected/` дополнится
+   ожидаемым состоянием.
+
+## Запуск вручную
+
+```bash
+bash examples/01-basic-load/run.sh /tmp/ex01     # data.db окажется в /tmp/ex01/
+sqlite3 /tmp/ex01/data.db "SELECT * FROM transactions;"
+```
+
+`run.sh WORKDIR` кладёт `data.db` в `WORKDIR` (по умолчанию — временная папка, путь печатается
+в stderr). Переопределить команду: `DS='ds' bash examples/01-basic-load/run.sh` (по умолчанию
+`python3 -m src.cli.commands`, работает из корня репозитория без установки пакета).
+
+## Как гоняются тесты
+
+```bash
+./run_tests.sh                                   # в Docker (Python 3.9.20), весь tests/
+python -m pytest tests/examples/ -q              # локально, если установлен pytest
+UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерировать expected/ после осознанной правки
+```
+
+Сверяется два артефакта на пример:
+- `expected/stdout.txt` — дословный stdout `run.sh` (сообщения CLI);
+- `expected/journal.txt` — человекочитаемый дамп журнала транзакций **без** поля `created_at`
+  (оно недетерминированно — реальное время вставки).
+
+## Каталог
+
+| Пример | Показывает |
+|---|---|
+| [`01-basic-load`](01-basic-load/) | загрузка двух батчей, `PATCH` при первом появлении |
+| [`02-partial-updates`](02-partial-updates/) | `POST` (перезапись) vs `PATCH` (новый объект) в одном батче |
+| [`03-delete-semantics`](03-delete-semantics/) | `null` → `DELETE`, затем повторное появление → `PATCH` |
