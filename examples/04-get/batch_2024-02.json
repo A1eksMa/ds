@@ -1,0 +1,4 @@
+{
+  "customer_id": ["102", "104"],
+  "email":       ["bob.new@example.com", "dave@example.com"]
+}

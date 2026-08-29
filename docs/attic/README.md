@@ -22,3 +22,4 @@
 | `database-design-2025-11.md` | схема БД + state + снэпшоты | [`../reference/database-schema.md`](../reference/database-schema.md), [`../roadmap/`](../roadmap/) |
 | `project-structure-2025-11.md` | раскладка модулей и dev/prod-версий | [`../reference/architecture.md`](../reference/architecture.md), `../../CONTRIBUTING.md` |
 | `todo-2025-08.md` | обсуждение 4 доработок (август 2025) | [`../decisions/`](../decisions/) (ADR 0004–0006), [`../roadmap/`](../roadmap/) |
+| `get-0.4.0a1.md` | спецификация `ds get` версии 0.4.0a1 (легла в основу переписывания) | [`../reference/get-output-format.md`](../reference/get-output-format.md), [`../reference/cli.md`](../reference/cli.md) |

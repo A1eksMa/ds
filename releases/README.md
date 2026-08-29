@@ -19,6 +19,27 @@ tar -xzf ds-0.2.0a1.tar.gz -C ./ds-0.2.0a1
 
 ---
 
+## Unreleased
+
+- Новая CLI-команда `ds get` — свёртка журнала в состояние источника (Level 1) и выгрузка в
+  JSON. Реализация — `src/service/get.py` (`fold_source` / `build_source` / `run_get` /
+  `load_preset`). Это переписанный заново путь чтения (был в 0.3.0a1–0.4.0a1 как
+  `fold_state`/`build_state`/`build_export`, снят в 0.5.0a1).
+  - Параметры: `--src` (повторяемый), `--lb` (повторяемый), `--dt` (срез / машина времени),
+    `--archive`, `--preset FILE` (секция `query`), `--out DIR` (по файлу `<Source>.json` на
+    источник; без `--out` — stdout). Явные флаги перекрывают пресет.
+  - Свёртка — по `(dt, cnt)` (ADR-0006), а не по `cnt`.
+  - Формат выхода: `{meta, data}` на источник, широкая таблица (строка на `id`); `null` =
+    последняя операция `DELETE`, отсутствие ключа = транзакции не было. `meta.gen_max_cnt` —
+    водяной знак для детекта устаревания на стороне потребителя.
+  - Схема БД **не менялась**. Манифест и `.js`-обёртка под `file://` — задача потребителя,
+    не ядра (см. `docs/reference/get-output-format.md`).
+- Тесты: `tests/service/test_get.py` (21), get-часть `tests/cli/test_commands.py` (5),
+  `examples/04-get/`. Итого 210, все проходят.
+- Документация: `docs/reference/get-output-format.md` (новый контракт), `docs/reference/cli.md`,
+  `docs/explanation/single-source-fold.md`; старый `docs/roadmap/state-retrieval.md` (спека
+  0.4.0a1) → `docs/attic/get-0.4.0a1.md`.
+
 ## 0.5.0a1 — `ds-0.5.0a1.tar.gz`
 
 Откат к ядру: три папки уровня Level 1 (`loader/`, `processing/`, `api/`) объединены в один

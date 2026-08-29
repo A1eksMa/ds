@@ -150,8 +150,8 @@ CREATE VIEW IF NOT EXISTS transactions_full AS
 
 ## Чего в схеме нет
 
-- **Таблицы `state`** — свёрнутое состояние нигде не персистится, каждый запрос считает его
-  заново (в 0.5.0a1 путь чтения вообще снят). См.
+- **Таблицы `state`** — свёрнутое состояние нигде не персистится, `ds get` считает его
+  заново при каждом вызове. См.
   [`../explanation/single-source-fold.md`](../explanation/single-source-fold.md),
-  [`../roadmap/state-retrieval.md`](../roadmap/state-retrieval.md).
+  [`../reference/get-output-format.md`](../reference/get-output-format.md).
 - **Чекпоинтов / снэпшотов**, `config.yaml`, таблиц под семантический маппинг.

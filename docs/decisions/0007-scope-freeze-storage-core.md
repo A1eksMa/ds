@@ -31,7 +31,7 @@
 - `docs/proposals/` → `docs/attic/` с пометкой «не строим по этому».
 - `docs/roadmap/` содержит только то, что сядет в ядро (список выше), а не весь исходный
   замысел. Семантика/Level 2/UI — явные non-goals ([`../explanation/scope-and-non-goals.md`](../explanation/scope-and-non-goals.md)).
-- `ds get` и свёртка Level 1 были сняты ради минимума кода, но остаются **в scope** и будут
-  переписаны — [`../roadmap/state-retrieval.md`](../roadmap/state-retrieval.md).
+- `ds get` и свёртка Level 1 были сняты ради минимума кода, затем переписаны заново —
+  [`../reference/get-output-format.md`](../reference/get-output-format.md).
 - Схема БД становится публичным интерфейсом для верхнего слоя → её стабильность и
   сверяемость с кодом критичны ([`../reference/database-schema.md`](../reference/database-schema.md)).

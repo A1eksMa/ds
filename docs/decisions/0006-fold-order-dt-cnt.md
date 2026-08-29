@@ -1,6 +1,6 @@
 # 0006. Свёртка Level 1 — по `(dt, cnt)`
 
-- **Статус:** Принято, **не реализовано** (свёртка снята из кода в 0.5.0a1 вместе с Processing Engine)
+- **Статус:** Принято, реализовано (`src/service/get.py :: fold_source`; было снято в 0.5.0a1, переписано заново)
 - **Дата:** 2025-08 (прежний `TODO.md`, п. 3)
 
 ## Контекст
@@ -35,4 +35,4 @@ timestamp (баг источника, часовые пояса) навсегд�
   `fold_state`.
 - Закрывает **только Level 1**. Level 2 (приоритет по `p` между источниками) — вне ядра.
 - Целевая модель отражена в [`../explanation/single-source-fold.md`](../explanation/single-source-fold.md);
-  реализация — [`../roadmap/single-source-fold.md`](../roadmap/single-source-fold.md).
+  формат выгрузки — [`../reference/get-output-format.md`](../reference/get-output-format.md).

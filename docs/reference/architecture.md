@@ -1,6 +1,6 @@
 # Архитектура (как в коде)
 
-Соответствует коду на 0.5.0a1. Полный обзор замысла верхнего уровня — в
+Соответствует коду на 0.5.0a1 (+ `ds get`). Полный обзор замысла верхнего уровня — в
 [`../explanation/overview.md`](../explanation/overview.md); аспирационная версия из 11
 компонентов — в [`../attic/components-architecture-2025-11.md`](../attic/components-architecture-2025-11.md)
 (по ней **не** строим).
@@ -36,10 +36,11 @@ src/
 │
 ├── service/          прикладные операции (внутренний фасад)
 │   ├── load.py        load() / load_file() — загрузка колоночного JSON, авто-act
+│   ├── get.py         fold_source / build_source / run_get — свёртка Level 1, выгрузка JSON; load_preset
 │   └── validate.py    validate_table() — форма входной таблицы
 │
 └── cli/
-    └── commands.py   argparse; сейчас одна команда: load
+    └── commands.py   argparse; команды: load, get
 ```
 
 Пакетов `storage/`, `pools/`, `core/`, `entities/`, `processing/`, `snapshots/`, `archive/`,
@@ -58,7 +59,7 @@ System_Ext(sources, "Системы-источники", "CRM, ERP, сайт —
 System_Ext(upper, "Слой обработки (будущее)", "Семантика, Level 2, UI — отдельный проект")
 
 Rel(sources, engineer, "Выгрузки (файлы)")
-Rel(engineer, ds, "ds load / (позже) ds get", "CLI")
+Rel(engineer, ds, "ds load / ds get", "CLI")
 Rel(ds, upper, "Состояние источника на момент времени", "JSON, по запросу")
 ```
 
@@ -72,7 +73,7 @@ Person(engineer, "Инженер данных")
 
 Container_Boundary(ds, "ds") {
   Container(cli, "CLI", "Python / argparse", "src/cli — разбор команд")
-  Container(service, "Service", "Python", "src/service — load; (позже) get")
+  Container(service, "Service", "Python", "src/service — load, get")
   Container(config, "Config", "Python", "src/config — чтение source.json")
   Container(port, "StoragePort", "Python Protocol", "src/ports — контракт хранилища")
   Container(sqlite_ad, "SQLiteAdapter", "Python / sqlite3", "src/adapters — DDL, пулы, журнал")
@@ -116,3 +117,12 @@ flowchart TD
 6. `txn_last_values` — одним запросом последнее значение по всем `(lb, id)` батча (для авто-`act`).
 7. По ячейкам: `null` → `DELETE`; нет прежнего значения → `PATCH`; есть → `POST`. `val_intern`, `txn_insert`.
 8. `commit()` (или `rollback()` на любой ошибке).
+
+## Поток данных при `ds get`
+
+Read-only, без управления транзакцией. `cli/commands.py :: _get` → (опц.)
+`service/get.py :: load_preset` → `merge_overrides` (флаги перекрывают пресет) →
+`run_get` → для каждого источника `build_source`: `lb_list` (резолв показателей) →
+`txn_query(src_id, until_dt, include_archive)` → `fold_source` (победитель по `(dt, cnt)`) →
+`id_get` / `val_get` (резолв в строки) → широкая таблица `{meta, data}`.
+Формат — [`get-output-format.md`](get-output-format.md).

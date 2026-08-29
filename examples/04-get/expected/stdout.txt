@@ -1,0 +1,68 @@
+loaded 6 transaction(s)
+loaded 2 transaction(s)
+--- ds get --dt 1706745600 ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1706745600.0,
+    "generated_at": 0,
+    "gen_max_cnt": 8,
+    "include_archive": false,
+    "rows": 4,
+    "labels": [
+      "email",
+      "phone"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@example.com",
+      "phone": "+7-900-000-0001"
+    },
+    {
+      "customer_id": "102",
+      "email": "bob.new@example.com",
+      "phone": "+7-900-000-0002"
+    },
+    {
+      "customer_id": "103",
+      "email": "carol@example.com",
+      "phone": null
+    },
+    {
+      "customer_id": "104",
+      "email": "dave@example.com"
+    }
+  ]
+}
+--- ds get --dt 1704067200 --lb email (машина времени) ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 6,
+    "include_archive": false,
+    "rows": 3,
+    "labels": [
+      "email"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@example.com"
+    },
+    {
+      "customer_id": "102",
+      "email": "bob@example.com"
+    },
+    {
+      "customer_id": "103",
+      "email": "carol@example.com"
+    }
+  ]
+}

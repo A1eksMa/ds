@@ -2,7 +2,8 @@
 examples/<name>/expected/.
 
 Two artefacts are compared per example:
-  * stdout.txt  -- verbatim stdout of run.sh (CLI messages)
+  * stdout.txt  -- stdout of run.sh (CLI messages, `ds get` JSON), with the
+                   non-deterministic `meta.generated_at` normalised to 0.
   * journal.txt -- human-readable dump of the transactions journal, with the
                    non-deterministic ``created_at`` column dropped.
 
@@ -13,12 +14,21 @@ Regenerate the expected files after an intentional change:
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+# `ds get` stamps meta.generated_at with the wall clock -- normalise it so the
+# expected stdout stays deterministic.
+_NONDETERMINISTIC = re.compile(r'("generated_at":\s*)[0-9.]+')
+
+
+def _normalise(text: str) -> str:
+    return _NONDETERMINISTIC.sub(r"\g<1>0", text)
 
 REPO = Path(__file__).resolve().parents[2]
 EXAMPLES = REPO / "examples"
@@ -71,7 +81,7 @@ def _run(example: Path, workdir: Path) -> str:
             f"{example.name}/run.sh exited {proc.returncode}\n"
             f"--- stdout ---\n{proc.stdout}\n--- stderr ---\n{proc.stderr}"
         )
-    return proc.stdout
+    return _normalise(proc.stdout)
 
 
 def _check(path: Path, actual: str) -> None:
