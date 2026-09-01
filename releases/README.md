@@ -19,8 +19,17 @@ tar -xzf ds-0.2.0a1.tar.gz -C ./ds-0.2.0a1
 
 ---
 
-## Unreleased
+## 0.6.0a1 — `ds-0.6.0a1.tar.gz`
 
+Возврат пути чтения (`ds get`) поверх текущей схемы + полная переработка документации.
+Схема БД не менялась.
+
+- **Документация переразбита** (Diátaxis): `docs/{explanation,reference,guides,decisions,roadmap,attic}/`.
+  `reference/` выверен по коду; аспирационный `docs/proposals/` и корневые `CONFIG_FORMAT.md` /
+  `TODO.md` перенесены в `docs/attic/` с пометкой «не соответствует коду». Добавлены ADR
+  (`docs/decisions/`), дорожная карта ядра (`docs/roadmap/`), запускаемые примеры
+  (`examples/` + `tests/examples/`). Корневой `README.md` переписан, добавлен `CONTRIBUTING.md`.
+  Удалён устаревший фикстур `sources/object/`.
 - Новая CLI-команда `ds get` — свёртка журнала в состояние источника (Level 1) и выгрузка в
   JSON. Реализация — `src/service/get.py` (`fold_source` / `build_source` / `run_get` /
   `load_preset`). Это переписанный заново путь чтения (был в 0.3.0a1–0.4.0a1 как
