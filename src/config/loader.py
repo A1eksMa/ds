@@ -29,7 +29,7 @@ def _load_label_spec(entry: object) -> Ok[LabelConfig] | Err[StorageError]:
             name=name,
             type=type_,
             archive=bool(entry.get("archive", False)),
-            publish=bool(entry.get("publish", True)),
+            publish=bool(entry.get("publish", False)),
             p=float(entry.get("p", 0.5)),
             description=entry.get("description"),
         ))

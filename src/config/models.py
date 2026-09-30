@@ -13,7 +13,9 @@ class LabelConfig:
     type: str = "text"          # "text" | "number" | "date" | "bool" -- same vocabulary
                                  # ds-webui uses for view.entities[].type
     archive: bool = False       # load straight into transactions_archive, never the active table
-    publish: bool = True        # ds-loader's publish stage should include it (not enforced here)
+    publish: bool = False       # opt-in: ds-loader's publish stage should include it (not
+                                 # enforced here) -- default false so the published set is an
+                                 # explicit allow-list, not "everything unless excluded"
     p: float = 0.5
     description: str | None = None
 

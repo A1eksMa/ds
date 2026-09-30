@@ -85,6 +85,16 @@ def test_load_source_with_inline_labels(crm_dir):
     assert labels["internal_flag"].publish is False
 
 
+def test_load_source_explicit_publish_true_overrides_default(crm_dir):
+    data = json.loads((crm_dir / "source.json").read_text())
+    data["labels"] = [{"name": "email", "publish": True}]
+    _write(crm_dir / "source.json", data)
+
+    result = load_source(crm_dir)
+    assert isinstance(result, Ok)
+    assert result.value.labels["email"].publish is True
+
+
 def test_load_source_label_defaults(crm_dir):
     data = json.loads((crm_dir / "source.json").read_text())
     data["labels"] = [{"name": "email"}]
@@ -95,7 +105,7 @@ def test_load_source_label_defaults(crm_dir):
     email = result.value.labels["email"]
     assert email.type == "text"
     assert email.archive is False
-    assert email.publish is True
+    assert email.publish is False
     assert email.p == 0.5
     assert email.description is None
 

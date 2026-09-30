@@ -17,8 +17,8 @@ def _label_to_dict(lb: LabelConfig) -> dict:
         d["type"] = lb.type
     if lb.archive:
         d["archive"] = True
-    if lb.publish is not True:
-        d["publish"] = False
+    if lb.publish:
+        d["publish"] = True
     if lb.p != 0.5:
         d["p"] = lb.p
     if lb.description is not None:

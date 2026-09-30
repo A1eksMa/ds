@@ -40,10 +40,10 @@ sources/
   "p": 0.9,
   "description": "CRM-система",
   "labels": [
-    { "name": "email", "type": "text" },
-    { "name": "revenue", "type": "number" },
+    { "name": "email", "type": "text", "publish": true },
+    { "name": "revenue", "type": "number", "publish": true },
     { "name": "internal_note", "type": "text", "archive": true },
-    { "name": "legacy_flag", "type": "bool", "publish": false }
+    { "name": "legacy_flag", "type": "bool" }
   ]
 }
 ```
@@ -67,12 +67,11 @@ sources/
 
 ```json
 {
-  "name": "internal_note",
-  "type": "text",
-  "archive": true,
-  "publish": false,
+  "name": "revenue",
+  "type": "number",
+  "publish": true,
   "p": 0.8,
-  "description": "Служебная заметка, не для витрины"
+  "description": "Выручка клиента"
 }
 ```
 
@@ -81,7 +80,7 @@ sources/
 | `name` | string | да | — | имя показателя (как столбец во входных данных) |
 | `type` | string | нет | `"text"` | `"text"` \| `"number"` \| `"date"` \| `"bool"` — тот же словарь, что у `view.entities[].type` в пресете `ds-webui`. Невалидное значение → ошибка загрузки. **Справочное**: `ds` его нигде не парсит и не проверяет данные на соответствие, только хранит и передаёт дальше. |
 | `archive` | bool | нет | `false` | **единственное поле из этой тройки, на которое реагирует сам `ds`**: при `ds load` транзакции этого показателя пишутся сразу в `transactions_archive`, минуя активную таблицу (см. ниже). |
-| `publish` | bool | нет | `true` | предназначено для стадии `publish` поллера `ds-loader` — какие показатели включать при перестроении витрины/манифеста. `ds` это поле не читает и не проверяет, кроме синтаксиса. |
+| `publish` | bool | нет | **`false`** | предназначено для стадии `publish` поллера `ds-loader` — какие показатели включать при перестроении витрины/манифеста. Дефолт «не публиковать» осознанно опрокинут в allow-list: список публикуемых показателей — то, что явно включено, а не всё подряд минус исключения. `ds` это поле не читает и не проверяет, кроме синтаксиса. |
 | `p` | float | нет | `0.5` | вес доверия показателя (см. [`../explanation/trust-weights.md`](../explanation/trust-weights.md)); как и `Source.p`, парсится, но пока не доходит до `lbs.p` в БД (та же незавершённость, что у `Source.p`) |
 | `description` | string | нет | `null` | справочно, не используется загрузчиком |
 
