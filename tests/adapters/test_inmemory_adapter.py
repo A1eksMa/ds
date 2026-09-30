@@ -341,8 +341,10 @@ def test_txn_delete_by_src(db):
 
     _insert(db, src, lb, id_, val, act)
     _insert(db, src, lb, id_, val, act)
-    db.txn_delete(src_id=src)
+    result = db.txn_delete(src_id=src)
 
+    assert isinstance(result, Ok)
+    assert result.value == 2
     assert db.txn_query().value == []
 
 
@@ -357,11 +359,33 @@ def test_txn_delete_by_src_and_lb(db):
     _insert(db, src, lb_a, id_, val, act)
     _insert(db, src, lb_b, id_, val, act)
 
-    db.txn_delete(src_id=src, lb_id=lb_a)
+    result = db.txn_delete(src_id=src, lb_id=lb_a)
 
+    assert isinstance(result, Ok)
+    assert result.value == 1
     remaining = db.txn_query().value
     assert len(remaining) == 1
     assert remaining[0].lb == lb_b
+
+
+def test_txn_delete_counts_archived_rows_too(db):
+    # regression: txn_delete used to report only the active-table rowcount,
+    # silently undercounting when matching rows also existed in the archive
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_archive(until_dt=_TS + 1)
+    _insert(db, src, lb, id_, val, act, dt=_TS + 200)
+
+    result = db.txn_delete(src_id=src)
+
+    assert isinstance(result, Ok)
+    assert result.value == 2
+    assert db.txn_query(include_archive=True).value == []
 
 
 # --- txn_last_values ---

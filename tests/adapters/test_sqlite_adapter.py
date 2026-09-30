@@ -281,7 +281,11 @@ def test_txn_delete_removes_from_both_tables(db):
     db.txn_archive(until_dt=_TS + 1)
     _insert(db, src, lb, id_, val, act, dt=_TS + 200)
 
-    db.txn_delete(src_id=src)
+    # regression: txn_delete used to report only the active-table rowcount,
+    # silently undercounting when matching rows also existed in the archive
+    result = db.txn_delete(src_id=src)
+    assert isinstance(result, Ok)
+    assert result.value == 2
     assert db.txn_query(include_archive=True).value == []
 
 

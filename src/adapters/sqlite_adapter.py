@@ -480,23 +480,25 @@ class SQLiteAdapter:
         try:
             self._conn.execute("BEGIN")
             if lb_id is not None:
-                cur = self._conn.execute(
+                cur1 = self._conn.execute(
                     "DELETE FROM transactions WHERE src = ? AND lb = ?",
                     (int(src_id), int(lb_id)),
                 )
-                self._conn.execute(
+                cur2 = self._conn.execute(
                     "DELETE FROM transactions_archive WHERE src = ? AND lb = ?",
                     (int(src_id), int(lb_id)),
                 )
             else:
-                cur = self._conn.execute(
+                cur1 = self._conn.execute(
                     "DELETE FROM transactions WHERE src = ?", (int(src_id),)
                 )
-                self._conn.execute(
+                cur2 = self._conn.execute(
                     "DELETE FROM transactions_archive WHERE src = ?", (int(src_id),)
                 )
             self._conn.commit()
-            return Ok(cur.rowcount)
+            # both tables count toward the total: a hard delete must account for
+            # rows in the archive too, not just the active table (see docs/roadmap/lifecycle-cli.md)
+            return Ok(cur1.rowcount + cur2.rowcount)
         except sqlite3.Error as exc:
             self._conn.rollback()
             return Err(StorageError(str(exc)))

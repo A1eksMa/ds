@@ -277,10 +277,13 @@ class InMemoryAdapter:
                 return False
             return True
 
-        before = len(self._transactions)
+        # both tables count toward the total: a hard delete must account for
+        # rows in the archive too, not just the active list
+        before = len(self._transactions) + len(self._archive)
         self._transactions = [r for r in self._transactions if not matches(r)]
         self._archive = [r for r in self._archive if not matches(r)]
-        return Ok(before - len(self._transactions))
+        after = len(self._transactions) + len(self._archive)
+        return Ok(before - after)
 
     # --- Bulk history lookup ---
 
