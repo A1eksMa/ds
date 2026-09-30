@@ -1,0 +1,5 @@
+{
+  "customer_id": ["101", "102", "103"],
+  "email": ["alice@e.com", "bob@e.com", "carol@e.com"],
+  "is_test_account": ["false", "true", "false"]
+}

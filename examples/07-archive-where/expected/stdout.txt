@@ -1,0 +1,97 @@
+loaded 6 transaction(s)
+--- ds get: все три клиента активны в основной таблице ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 6,
+    "include_archive": false,
+    "rows": 3,
+    "labels": [
+      "email",
+      "is_test_account"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@e.com",
+      "is_test_account": "false"
+    },
+    {
+      "customer_id": "102",
+      "email": "bob@e.com",
+      "is_test_account": "true"
+    },
+    {
+      "customer_id": "103",
+      "email": "carol@e.com",
+      "is_test_account": "false"
+    }
+  ]
+}
+--- ds archive --where is_test_account=true --yes ---
+archived 2 transaction(s)
+--- ds get: клиент 102 (test-аккаунт) пропал из основной таблицы целиком ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 6,
+    "include_archive": false,
+    "rows": 2,
+    "labels": [
+      "email",
+      "is_test_account"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@e.com",
+      "is_test_account": "false"
+    },
+    {
+      "customer_id": "103",
+      "email": "carol@e.com",
+      "is_test_account": "false"
+    }
+  ]
+}
+--- ds get --archive: 102 виден при явном запросе архива, вместе с email ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 6,
+    "include_archive": true,
+    "rows": 3,
+    "labels": [
+      "email",
+      "is_test_account"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@e.com",
+      "is_test_account": "false"
+    },
+    {
+      "customer_id": "102",
+      "email": "bob@e.com",
+      "is_test_account": "true"
+    },
+    {
+      "customer_id": "103",
+      "email": "carol@e.com",
+      "is_test_account": "false"
+    }
+  ]
+}

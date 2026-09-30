@@ -375,7 +375,7 @@ def test_txn_delete_by_src_and_lb(db):
     _insert(db, src, lb_a, id_, val, act)
     _insert(db, src, lb_b, id_, val, act)
 
-    result = db.txn_delete(src_id=src, lb_id=lb_a)
+    result = db.txn_delete(src_id=src, lb_ids=[lb_a])
 
     assert isinstance(result, Ok)
     assert result.value == 1

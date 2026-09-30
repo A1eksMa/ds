@@ -10,8 +10,8 @@ from src.adapters.sqlite_adapter import SQLiteAdapter
 from src.config.loader import load_source
 from src.domain.errors import NotFound
 from src.domain.result import Err
-from src.service import delete as svc_delete
 from src.service import get as svc_get
+from src.service import selector as svc_selector
 from src.service.load import load_file
 
 
@@ -81,42 +81,109 @@ def _get(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
     return 0
 
 
-def _delete(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
-    target_r = svc_delete.resolve_target(storage, args.src, args.lb)
-    if isinstance(target_r, Err):
-        print(f"error: {_err_msg(target_r.error)}", file=sys.stderr)
-        return 1
-    target = target_r.value
+# --- delete / archive: same selector, different terminal action (hard vs soft removal) ---
 
-    count_r = svc_delete.count_matching(storage, target)
+def _validate_lifecycle_args(args: argparse.Namespace) -> str | None:
+    has_cnt = bool(args.cnt)
+    has_other = bool(
+        args.lb or args.id or args.where or args.dt_from or args.dt_until
+        or args.created_from or args.created_until
+    )
+    if has_cnt and has_other:
+        return "--cnt cannot be combined with --lb/--id/--where/--dt-*/--created-*"
+    if args.id and args.where:
+        return "--id and --where are mutually exclusive"
+    if args.where is not None and "=" not in args.where:
+        return "--where must be LB=VALUE"
+    return None
+
+
+def _describe_selector(args: argparse.Namespace) -> str:
+    if args.cnt:
+        return f"{args.src} (cnt {','.join(str(c) for c in args.cnt)})"
+    parts = [args.src]
+    if args.lb:
+        parts.append("lb=" + ",".join(args.lb))
+    if args.where:
+        parts.append("where " + args.where)
+    elif args.id:
+        parts.append("id=" + ",".join(args.id))
+    if args.dt_from or args.dt_until:
+        parts.append(f"dt[{args.dt_from or ''}:{args.dt_until or ''}]")
+    if args.created_from or args.created_until:
+        parts.append(f"created[{args.created_from or ''}:{args.created_until or ''}]")
+    return " ".join(parts)
+
+
+def _lifecycle_op(storage: SQLiteAdapter, args: argparse.Namespace, verb_past: str, verb_imp: str, action) -> int:
+    err = _validate_lifecycle_args(args)
+    if err:
+        print(f"error: {err}", file=sys.stderr)
+        return 1
+
+    where = None
+    if args.where:
+        name, _, value = args.where.partition("=")
+        where = (name, value)
+
+    selector_r = svc_selector.resolve_selector(
+        storage,
+        src_name=args.src,
+        lb_names=args.lb,
+        id_values=args.id,
+        where=where,
+        cnts=args.cnt,
+        from_dt=float(args.dt_from) if args.dt_from else None,
+        until_dt=float(args.dt_until) if args.dt_until else None,
+        created_from=float(args.created_from) if args.created_from else None,
+        created_until=float(args.created_until) if args.created_until else None,
+    )
+    if isinstance(selector_r, Err):
+        print(f"error: {_err_msg(selector_r.error)}", file=sys.stderr)
+        return 1
+    selector = selector_r.value
+
+    count_r = svc_selector.count_matching(storage, selector)
     if isinstance(count_r, Err):
         print(f"error: {_err_msg(count_r.error)}", file=sys.stderr)
         return 1
     count = count_r.value
 
     if count == 0:
-        print("deleted 0 transaction(s)")
+        print(f"{verb_past} 0 transaction(s)")
         return 0
 
     if not args.yes:
-        what = f"{args.src}.{args.lb}" if args.lb else args.src
+        what = _describe_selector(args)
         try:
-            answer = input(f"Delete {count} transaction(s) for {what} (active + archived)? [y/N] ")
+            answer = input(f"{verb_imp} {count} transaction(s) for {what} (active + archived)? [y/N] ")
         except (EOFError, OSError):
             # no readable stdin (piped/closed input, or a captured test run) -> never
-            # proceed with an irreversible delete just because we couldn't ask
+            # proceed with an irreversible/semi-irreversible op just because we couldn't ask
             answer = ""
         if answer.strip().lower() not in ("y", "yes"):
             print("aborted", file=sys.stderr)
             return 1
 
-    result = storage.txn_delete(src_id=target.src_id, lb_id=target.lb_id)
+    result = action(
+        src_id=selector.src_id, lb_ids=selector.lb_ids, id_ids=selector.id_ids,
+        cnts=selector.cnts, from_dt=selector.from_dt, until_dt=selector.until_dt,
+        created_from=selector.created_from, created_until=selector.created_until,
+    )
     if isinstance(result, Err):
         print(f"error: {_err_msg(result.error)}", file=sys.stderr)
         return 1
 
-    print(f"deleted {result.value} transaction(s)")
+    print(f"{verb_past} {result.value} transaction(s)")
     return 0
+
+
+def _delete(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    return _lifecycle_op(storage, args, "deleted", "Delete", storage.txn_delete)
+
+
+def _archive(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    return _lifecycle_op(storage, args, "archived", "Archive", storage.txn_archive)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,12 +204,35 @@ def main(argv: list[str] | None = None) -> int:
     get_p.add_argument("--preset", help="preset JSON file; its 'query' section supplies the parameters")
     get_p.add_argument("--archive", action="store_true", help="include archived transactions in the fold")
 
+    def _add_lifecycle_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--src", required=True, help="source name")
+        p.add_argument("--lb", action="append", help="label name (repeatable); default: every label")
+        p.add_argument("--id", action="append", help="key value (repeatable); default: every key")
+        p.add_argument(
+            "--where", metavar="LB=VALUE",
+            help="select keys whose current (folded) value of label LB equals VALUE; "
+                 "mutually exclusive with --id",
+        )
+        p.add_argument(
+            "--cnt", action="append", type=int,
+            help="specific transaction(s) by counter number (repeatable); standalone -- "
+                 "not combinable with --lb/--id/--where/--dt-*/--created-*",
+        )
+        p.add_argument("--dt-from", help="business time (dt) lower bound, unix timestamp")
+        p.add_argument("--dt-until", help="business time (dt) upper bound, unix timestamp")
+        p.add_argument("--created-from", help="load time (created_at) lower bound, unix timestamp")
+        p.add_argument("--created-until", help="load time (created_at) upper bound, unix timestamp")
+        p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
     delete_p = sub.add_parser(
-        "delete", help="permanently delete transactions for a source (or one of its labels)"
+        "delete", help="permanently delete matching transactions from both transactions and transactions_archive"
     )
-    delete_p.add_argument("--src", required=True, help="source name")
-    delete_p.add_argument("--lb", help="label name; default: the whole source")
-    delete_p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    _add_lifecycle_args(delete_p)
+
+    archive_p = sub.add_parser(
+        "archive", help="move matching active transactions into transactions_archive"
+    )
+    _add_lifecycle_args(archive_p)
 
     args = parser.parse_args(argv)
     storage = SQLiteAdapter(args.db)
@@ -153,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
         return _get(storage, args)
     if args.command == "delete":
         return _delete(storage, args)
+    if args.command == "archive":
+        return _archive(storage, args)
     return 0
 
 

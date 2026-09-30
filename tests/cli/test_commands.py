@@ -240,3 +240,127 @@ def test_delete_command_without_yes_respects_accepted_prompt(db_path, source_dir
     rc = main(["--db", db_path, "delete", "--src", "CRM", "--lb", "phone"])
     assert rc == 0
     assert "deleted 2 transaction(s)" in capsys.readouterr().out
+
+
+def test_delete_command_by_id(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--id", "101", "--yes"])
+    assert rc == 0
+    assert "deleted 2 transaction(s)" in capsys.readouterr().out  # 101: email + phone
+
+    rc = main(["--db", db_path, "get", "--src", "CRM"])
+    doc = json.loads(capsys.readouterr().out)
+    assert {r["customer_id"] for r in doc["data"]} == {"102"}
+
+
+def test_delete_command_unknown_id(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--id", "no-such-id", "--yes"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_delete_command_by_where(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    # 102's email was updated to "b.new@e.com" in the second batch
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--where", "email=b.new@e.com", "--yes"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "get", "--src", "CRM"])
+    doc = json.loads(capsys.readouterr().out)
+    assert {r["customer_id"] for r in doc["data"]} == {"101"}
+
+
+def test_delete_command_id_and_where_are_mutually_exclusive(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--id", "101", "--where", "email=x", "--yes"])
+    assert rc == 1
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_delete_command_by_cnt(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    storage = SQLiteAdapter(db_path)
+    src_id = next(s.src_id for s in storage.src_list().value if s.name == "CRM")
+    one_cnt = int(storage.txn_query(src_id=src_id).value[0].cnt)
+
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--cnt", str(one_cnt), "--yes"])
+    assert rc == 0
+    assert "deleted 1 transaction(s)" in capsys.readouterr().out
+    assert storage.txn_query(src_id=src_id, cnts=[one_cnt], include_archive=True).value == []
+
+
+def test_delete_command_cnt_not_combinable_with_lb(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--cnt", "1", "--lb", "email", "--yes"])
+    assert rc == 1
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+def test_delete_command_dt_range(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    # only the first batch (dt=1700000000) falls in this range; second batch (dt=1700100000) doesn't
+    rc = main([
+        "--db", db_path, "delete", "--src", "CRM",
+        "--dt-from", "1699999999", "--dt-until", "1700000001", "--yes",
+    ])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "get", "--src", "CRM", "--archive"])
+    doc = json.loads(capsys.readouterr().out)
+    # 102's email update from batch 2 (dt=1700100000) must have survived
+    row102 = next(r for r in doc["data"] if r["customer_id"] == "102")
+    assert row102["email"] == "b.new@e.com"
+
+
+def test_delete_command_created_range_excludes_everything_loaded_earlier(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    # a created_at window strictly before "now" (when _seed's loads actually ran) matches nothing
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--created-until", "0", "--yes"])
+    assert rc == 0
+    assert "deleted 0 transaction(s)" in capsys.readouterr().out
+
+
+# --- archive command ---
+
+def test_archive_command_moves_without_deleting(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "archive", "--src", "CRM", "--lb", "phone", "--yes"])
+    assert rc == 0
+    assert "archived 2 transaction(s)" in capsys.readouterr().out
+
+    rc = main(["--db", db_path, "get", "--src", "CRM", "--lb", "phone"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["data"] == []  # gone from the active fold ...
+
+    rc = main(["--db", db_path, "get", "--src", "CRM", "--lb", "phone", "--archive"])
+    doc_full = json.loads(capsys.readouterr().out)
+    assert doc_full["data"] != []  # ... but still there, unlike delete
+
+
+def test_archive_command_unknown_source(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "archive", "--src", "ERP", "--yes"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_archive_command_by_where(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "archive", "--src", "CRM", "--where", "email=b.new@e.com", "--yes"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "get", "--src", "CRM"])
+    doc = json.loads(capsys.readouterr().out)
+    assert {r["customer_id"] for r in doc["data"]} == {"101"}  # 102 archived out of the active fold
+
+
+def test_archive_command_without_yes_respects_declined_prompt(db_path, source_dir, tmp_path, capsys, monkeypatch):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    rc = main(["--db", db_path, "archive", "--src", "CRM", "--lb", "phone"])
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err

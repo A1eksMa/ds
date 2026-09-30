@@ -13,6 +13,38 @@ from src.ports.clock_port import ClockPort
 from src.adapters.system_ports import SystemClock
 
 
+def _row_matcher(
+    src_id, lb_ids, id_ids, cnts, from_dt, until_dt, created_from, created_until,
+):
+    """Build a per-row predicate once (mirrors SQLiteAdapter's _filter_clauses):
+    None = no filter on that dimension, an explicitly empty list = matches
+    nothing (e.g. a --where condition that resolved to zero keys)."""
+    lb_set = {int(x) for x in lb_ids} if lb_ids is not None else None
+    id_set = {int(x) for x in id_ids} if id_ids is not None else None
+    cnt_set = {int(x) for x in cnts} if cnts is not None else None
+
+    def matches(row: Dict) -> bool:
+        if src_id is not None and row["src"] != int(src_id):
+            return False
+        if lb_set is not None and row["lb"] not in lb_set:
+            return False
+        if id_set is not None and row["id"] not in id_set:
+            return False
+        if cnt_set is not None and row["cnt"] not in cnt_set:
+            return False
+        if from_dt is not None and row["dt"] < from_dt:
+            return False
+        if until_dt is not None and row["dt"] > until_dt:
+            return False
+        if created_from is not None and row["created_at"] < created_from:
+            return False
+        if created_until is not None and row["created_at"] > created_until:
+            return False
+        return True
+
+    return matches
+
+
 class InMemoryAdapter:
     """In-memory StoragePort implementation for testing."""
 
@@ -96,6 +128,10 @@ class InMemoryAdapter:
         if value is None:
             return Err(StorageError(f"id {id_id} not found"))
         return Ok(value)
+
+    def id_lookup(self, value: str) -> Union[Ok[Optional[IdId]], Err[StorageError]]:
+        id_id = self._id_values.get(value)
+        return Ok(IdId(id_id) if id_id is not None else None)
 
     def val_intern(self, value: str) -> Union[Ok[ValId], Err[StorageError]]:
         if value not in self._val_values:
@@ -233,22 +269,23 @@ class InMemoryAdapter:
     def txn_query(
         self,
         src_id: Optional[SrcId] = None,
-        lb_id: Optional[LbId] = None,
-        id_id: Optional[IdId] = None,
+        lb_ids: Optional[List[LbId]] = None,
+        id_ids: Optional[List[IdId]] = None,
+        cnts: Optional[List[CntId]] = None,
+        from_dt: Optional[float] = None,
         until_dt: Optional[float] = None,
+        created_from: Optional[float] = None,
+        created_until: Optional[float] = None,
         from_cnt: Optional[CntId] = None,
         include_archive: bool = False,
     ) -> Union[Ok[List[Transaction]], Err[StorageError]]:
+        matches = _row_matcher(
+            src_id, lb_ids, id_ids, cnts, from_dt, until_dt, created_from, created_until,
+        )
         pool = self._transactions + (self._archive if include_archive else [])
         result = []
         for row in sorted(pool, key=lambda r: r["cnt"]):
-            if src_id is not None and row["src"] != int(src_id):
-                continue
-            if lb_id is not None and row["lb"] != int(lb_id):
-                continue
-            if id_id is not None and row["id"] != int(id_id):
-                continue
-            if until_dt is not None and row["dt"] > until_dt:
+            if not matches(row):
                 continue
             if from_cnt is not None and row["cnt"] <= int(from_cnt):
                 continue
@@ -259,24 +296,39 @@ class InMemoryAdapter:
             ))
         return Ok(result)
 
-    def txn_archive(self, until_dt: float) -> Union[Ok[int], Err[StorageError]]:
-        to_move = [r for r in self._transactions if r["dt"] <= until_dt]
+    def txn_archive(
+        self,
+        src_id: Optional[SrcId] = None,
+        lb_ids: Optional[List[LbId]] = None,
+        id_ids: Optional[List[IdId]] = None,
+        cnts: Optional[List[CntId]] = None,
+        from_dt: Optional[float] = None,
+        until_dt: Optional[float] = None,
+        created_from: Optional[float] = None,
+        created_until: Optional[float] = None,
+    ) -> Union[Ok[int], Err[StorageError]]:
+        matches = _row_matcher(
+            src_id, lb_ids, id_ids, cnts, from_dt, until_dt, created_from, created_until,
+        )
+        to_move = [r for r in self._transactions if matches(r)]
         self._archive.extend(to_move)
-        self._transactions = [r for r in self._transactions if r["dt"] > until_dt]
+        self._transactions = [r for r in self._transactions if not matches(r)]
         return Ok(len(to_move))
 
     def txn_delete(
         self,
-        src_id: SrcId,
-        lb_id: Optional[LbId] = None,
+        src_id: Optional[SrcId] = None,
+        lb_ids: Optional[List[LbId]] = None,
+        id_ids: Optional[List[IdId]] = None,
+        cnts: Optional[List[CntId]] = None,
+        from_dt: Optional[float] = None,
+        until_dt: Optional[float] = None,
+        created_from: Optional[float] = None,
+        created_until: Optional[float] = None,
     ) -> Union[Ok[int], Err[StorageError]]:
-        def matches(row: Dict) -> bool:
-            if row["src"] != int(src_id):
-                return False
-            if lb_id is not None and row["lb"] != int(lb_id):
-                return False
-            return True
-
+        matches = _row_matcher(
+            src_id, lb_ids, id_ids, cnts, from_dt, until_dt, created_from, created_until,
+        )
         # both tables count toward the total: a hard delete must account for
         # rows in the archive too, not just the active list
         before = len(self._transactions) + len(self._archive)

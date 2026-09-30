@@ -44,3 +44,4 @@ UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерир
 | [`04-get`](04-get/) | свёртка журнала в состояние на заданную дату, `ds get` |
 | [`05-delete-label`](05-delete-label/) | `ds delete` — жёсткое удаление показателя из журнала (обе таблицы) |
 | [`06-label-config`](06-label-config/) | инвентарь показателей в `source.json` — `type`/`archive`/`publish` |
+| [`07-archive-where`](07-archive-where/) | `ds archive`/`ds delete` по условию на значение показателя (`--where LB=VALUE`) |

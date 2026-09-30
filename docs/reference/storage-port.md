@@ -25,6 +25,7 @@
 | `lb_intern(name, src_id)` | `LbId` — метка **в контексте источника** (`src_id` обязателен) |
 | `id_intern(value)` | `IdId` |
 | `id_get(id_id)` | `str` — обратный резолв |
+| `id_lookup(value)` | `Optional[IdId]` — обратный резолв, **без побочных эффектов**: `None`, если значение никогда не интернировалось (в отличие от `id_intern`, ничего не создаёт). Резолв `--id VALUE` у `ds delete`/`ds archive` |
 | `val_intern(value)` | `ValId` |
 | `val_get(val_id)` | `str` |
 | `act_intern(act: Act)` | `ActId` |
@@ -52,9 +53,9 @@
 | Метод | Смысл |
 |---|---|
 | `txn_insert(TransactionInput, archived=False)` | вставить запись; вернуть полный `Transaction` (с присвоенными `cnt`, `created_at`). `archived=True` — писать сразу в `transactions_archive`, минуя активную таблицу (см. `source.json`'s `labels[].archive`, [`config-format.md`](config-format.md)) |
-| `txn_query(src_id=None, lb_id=None, id_id=None, until_dt=None, from_cnt=None, include_archive=False)` | выборка журнала с фильтрами; `until_dt` — срез «машины времени»; `from_cnt` — с какого `cnt`; `include_archive` — читать `transactions_full` |
-| `txn_archive(until_dt)` | переместить в архив все транзакции с `dt <= until_dt`; вернуть число перемещённых |
-| `txn_delete(src_id, lb_id=None)` | физически удалить транзакции источника (опц. одной метки); вернуть число удалённых |
+| `txn_query(src_id=None, lb_ids=None, id_ids=None, cnts=None, from_dt=None, until_dt=None, created_from=None, created_until=None, from_cnt=None, include_archive=False)` | выборка журнала с фильтрами (все, кроме `src_id`/`from_cnt`/`include_archive`, — списки, объединяются через И); `from_dt`/`until_dt` — диапазон бизнес-времени (`dt`); `created_from`/`created_until` — диапазон времени физической загрузки (`created_at`); `from_cnt` — с какого `cnt` (не включая); `include_archive` — читать `transactions_full`. `None` у списочного фильтра = без ограничения по этому измерению, **пустой список** = не подходит ничего (например, `--where` без единого совпадения) |
+| `txn_archive(src_id=None, lb_ids=None, id_ids=None, cnts=None, from_dt=None, until_dt=None, created_from=None, created_until=None)` | переместить в архив подходящие **активные** транзакции; вернуть число перемещённых. Без единого фильтра — заденет всю БД; порт этого не запрещает, `ds archive` в CLI требует `--src` |
+| `txn_delete(src_id=None, lb_ids=None, id_ids=None, cnts=None, from_dt=None, until_dt=None, created_from=None, created_until=None)` | физически удалить подходящие транзакции из **обеих** таблиц (`transactions` и `transactions_archive`); вернуть суммарное число удалённых. Тот же набор фильтров, что у `txn_archive` — см. `src/service/selector.py` |
 | `txn_last_values(src_id, lb_ids, id_ids)` | для каждой пары `(lb, id)`, у которой есть хоть одна транзакция (активная или архивная) под `src_id`, — последнее `val` по `cnt`. Пары без истории в результат **не попадают**; вызывающий трактует отсутствие ключа как `val = 0`. Используется для авто-`act` при загрузке |
 
 ## Паритет адаптеров
