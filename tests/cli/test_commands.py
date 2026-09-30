@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from src.adapters.sqlite_adapter import SQLiteAdapter
 from src.cli.commands import main
 
 
@@ -130,3 +131,83 @@ def test_get_command_flag_overrides_preset_dt(db_path, source_dir, tmp_path, cap
     assert doc["meta"]["as_of"] == 1700100000.0
     row102 = next(r for r in doc["data"] if r["customer_id"] == "102")
     assert row102["email"] == "b.new@e.com"
+
+
+# --- delete command ---
+
+def test_delete_command_unknown_source(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "ERP", "--yes"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_delete_command_unknown_label(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--lb", "fax", "--yes"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_delete_command_with_yes_removes_active_transactions(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--lb", "phone", "--yes"])
+    assert rc == 0
+    assert "deleted 2 transaction(s)" in capsys.readouterr().out
+
+    rc = main(["--db", db_path, "get", "--src", "CRM", "--lb", "phone"])
+    assert rc == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["data"] == []
+
+
+def test_delete_command_also_removes_archived_transactions(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    storage = SQLiteAdapter(db_path)
+    archived = storage.txn_archive(until_dt=1_800_000_000)
+    assert archived.value > 0
+
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--yes"])
+    assert rc == 0
+    capsys.readouterr()
+
+    src_id = next(s.src_id for s in storage.src_list().value if s.name == "CRM")
+    assert storage.txn_query(src_id=src_id, include_archive=True).value == []
+
+
+def test_delete_command_zero_matches_reports_zero_without_prompting(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    main(["--db", db_path, "delete", "--src", "CRM", "--lb", "phone", "--yes"])
+    capsys.readouterr()
+
+    # second delete of the now-empty label: nothing to confirm, no prompt needed
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--lb", "phone"])
+    assert rc == 0
+    assert "deleted 0 transaction(s)" in capsys.readouterr().out
+
+
+def test_delete_command_without_yes_aborts_when_stdin_unavailable(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--lb", "phone"])
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err
+
+
+def test_delete_command_without_yes_respects_declined_prompt(db_path, source_dir, tmp_path, capsys, monkeypatch):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--lb", "phone"])
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err
+
+    rc = main(["--db", db_path, "get", "--src", "CRM", "--lb", "phone"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["data"] != []  # declined -- phone transactions still there
+
+
+def test_delete_command_without_yes_respects_accepted_prompt(db_path, source_dir, tmp_path, capsys, monkeypatch):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    rc = main(["--db", db_path, "delete", "--src", "CRM", "--lb", "phone"])
+    assert rc == 0
+    assert "deleted 2 transaction(s)" in capsys.readouterr().out

@@ -11,11 +11,11 @@
 | Тема | Что | Было в коде | Заметки |
 |---|---|---|---|
 | [entity-curation](entity-curation.md) | merge / split / delete / rename над `srcs`/`lbs`/`ids`/`vals` | нет | сначала решить [ADR-0009](../decisions/0009-entity-curation-rewrite-vs-events.md) |
-| [lifecycle-cli](lifecycle-cli.md) | вывести `txn_archive` / `txn_delete` в CLI | в порту — да, в CLI — нет | |
+| [lifecycle-cli](lifecycle-cli.md) | вывести `txn_archive` / `txn_delete` в CLI | `delete` — да; `archive`/`restore` — нет | `archive` ещё и нужно расширить фильтром src/lb в порту |
 | [schema-migration](schema-migration.md) | инструменты миграции при изменении схемы ядра | нет | |
 | [optimization](optimization.md) | индексы, `VACUUM`, дедупликация, чистка осиротевших записей пулов | базовые индексы — да | |
 
-Сделано: выдача состояния (`ds get`, Level 1 свёртка) — см.
+Сделано: выдача состояния (`ds get`, Level 1 свёртка) и жёсткое удаление (`ds delete`) — см.
 [`../reference/cli.md`](../reference/cli.md), [`../reference/get-output-format.md`](../reference/get-output-format.md).
 
 ## Разумный порядок

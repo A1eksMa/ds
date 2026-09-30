@@ -1,0 +1,57 @@
+loaded 4 transaction(s)
+--- ds get: junk_field ещё на месте ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 4,
+    "include_archive": false,
+    "rows": 2,
+    "labels": [
+      "email",
+      "junk_field"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "1",
+      "email": "a@x.com",
+      "junk_field": "tmp1"
+    },
+    {
+      "customer_id": "2",
+      "email": "b@x.com",
+      "junk_field": "tmp2"
+    }
+  ]
+}
+--- ds delete --src CRM --lb junk_field --yes ---
+deleted 2 transaction(s)
+--- ds get: junk_field пропал из данных (метка в пуле осталась, но пуста) ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 3,
+    "include_archive": false,
+    "rows": 2,
+    "labels": [
+      "email",
+      "junk_field"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "1",
+      "email": "a@x.com"
+    },
+    {
+      "customer_id": "2",
+      "email": "b@x.com"
+    }
+  ]
+}

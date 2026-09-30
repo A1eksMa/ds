@@ -10,6 +10,7 @@ from src.adapters.sqlite_adapter import SQLiteAdapter
 from src.config.loader import load_source
 from src.domain.errors import NotFound
 from src.domain.result import Err
+from src.service import delete as svc_delete
 from src.service import get as svc_get
 from src.service.load import load_file
 
@@ -80,6 +81,44 @@ def _get(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
     return 0
 
 
+def _delete(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    target_r = svc_delete.resolve_target(storage, args.src, args.lb)
+    if isinstance(target_r, Err):
+        print(f"error: {_err_msg(target_r.error)}", file=sys.stderr)
+        return 1
+    target = target_r.value
+
+    count_r = svc_delete.count_matching(storage, target)
+    if isinstance(count_r, Err):
+        print(f"error: {_err_msg(count_r.error)}", file=sys.stderr)
+        return 1
+    count = count_r.value
+
+    if count == 0:
+        print("deleted 0 transaction(s)")
+        return 0
+
+    if not args.yes:
+        what = f"{args.src}.{args.lb}" if args.lb else args.src
+        try:
+            answer = input(f"Delete {count} transaction(s) for {what} (active + archived)? [y/N] ")
+        except (EOFError, OSError):
+            # no readable stdin (piped/closed input, or a captured test run) -> never
+            # proceed with an irreversible delete just because we couldn't ask
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("aborted", file=sys.stderr)
+            return 1
+
+    result = storage.txn_delete(src_id=target.src_id, lb_id=target.lb_id)
+    if isinstance(result, Err):
+        print(f"error: {_err_msg(result.error)}", file=sys.stderr)
+        return 1
+
+    print(f"deleted {result.value} transaction(s)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ds", description="data-sources CLI")
     parser.add_argument("--db", default="data.db", help="SQLite database path (default: data.db)")
@@ -98,6 +137,13 @@ def main(argv: list[str] | None = None) -> int:
     get_p.add_argument("--preset", help="preset JSON file; its 'query' section supplies the parameters")
     get_p.add_argument("--archive", action="store_true", help="include archived transactions in the fold")
 
+    delete_p = sub.add_parser(
+        "delete", help="permanently delete transactions for a source (or one of its labels)"
+    )
+    delete_p.add_argument("--src", required=True, help="source name")
+    delete_p.add_argument("--lb", help="label name; default: the whole source")
+    delete_p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
     args = parser.parse_args(argv)
     storage = SQLiteAdapter(args.db)
 
@@ -105,6 +151,8 @@ def main(argv: list[str] | None = None) -> int:
         return _load(storage, args)
     if args.command == "get":
         return _get(storage, args)
+    if args.command == "delete":
+        return _delete(storage, args)
     return 0
 
 

@@ -41,3 +41,5 @@ UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерир
 | [`01-basic-load`](01-basic-load/) | загрузка двух батчей, `PATCH` при первом появлении |
 | [`02-partial-updates`](02-partial-updates/) | `POST` (перезапись) vs `PATCH` (новый объект) в одном батче |
 | [`03-delete-semantics`](03-delete-semantics/) | `null` → `DELETE`, затем повторное появление → `PATCH` |
+| [`04-get`](04-get/) | свёртка журнала в состояние на заданную дату, `ds get` |
+| [`05-delete-label`](05-delete-label/) | `ds delete` — жёсткое удаление показателя из журнала (обе таблицы) |

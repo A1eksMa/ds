@@ -1,0 +1,5 @@
+{
+  "customer_id": ["1", "2"],
+  "email": ["a@x.com", "b@x.com"],
+  "junk_field": ["tmp1", "tmp2"]
+}
