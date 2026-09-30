@@ -47,3 +47,4 @@ UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерир
 | [`07-archive-where`](07-archive-where/) | `ds archive`/`ds delete` по условию на значение показателя (`--where LB=VALUE`) |
 | [`08-compact`](08-compact/) | `ds compact` — убрать записи, повторяющие уже действовавшее значение |
 | [`09-update-config`](09-update-config/) | `ds update` — синхронизировать инвентарь показателей `source.json` с базой |
+| [`10-upload-strict`](10-upload-strict/) | `ds upload` — строгая загрузка: отказ целиком при новом показателе или несовпадении типа |

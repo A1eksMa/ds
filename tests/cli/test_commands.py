@@ -95,6 +95,104 @@ def test_load_command_archive_flagged_label_end_to_end(db_path, tmp_path, capsys
     assert doc_full["data"][0]["internal_note"] == "only for auditors"
 
 
+# --- upload command ---
+
+def test_upload_command_succeeds_when_schema_and_types_match(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    (d / "source.json").write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [{"name": "revenue", "type": "number"}],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({"customer_id": ["1"], "revenue": ["100"]}), encoding="utf-8")
+
+    rc = main(["--db", db_path, "upload", str(d), str(data), "--dt", "1700000000"])
+    assert rc == 0
+    assert "uploaded 1 transaction(s)" in capsys.readouterr().out
+
+
+def test_upload_command_rejects_unknown_label_and_loads_nothing(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    (d / "source.json").write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id", "labels": [{"name": "email"}],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({
+        "customer_id": ["1"], "email": ["a@b.com"], "phone": ["+1"],
+    }), encoding="utf-8")
+
+    rc = main(["--db", db_path, "upload", str(d), str(data), "--dt", "1700000000"])
+    assert rc == 1
+    assert "unknown label 'phone'" in capsys.readouterr().err
+
+    storage = SQLiteAdapter(db_path)
+    assert storage.src_list().value == []  # nothing loaded at all -- not even "email"
+
+
+def test_upload_command_rejects_bad_type_and_loads_nothing(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    (d / "source.json").write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [{"name": "email"}, {"name": "revenue", "type": "number"}],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({
+        "customer_id": ["1"], "email": ["a@b.com"], "revenue": ["not-a-number"],
+    }), encoding="utf-8")
+
+    rc = main(["--db", db_path, "upload", str(d), str(data), "--dt", "1700000000"])
+    assert rc == 1
+    assert "does not parse" in capsys.readouterr().err
+
+    storage = SQLiteAdapter(db_path)
+    assert storage.src_list().value == []
+
+
+def test_upload_command_allows_null_in_a_typed_column(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    (d / "source.json").write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [{"name": "revenue", "type": "number"}],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({"customer_id": ["1"], "revenue": [None]}), encoding="utf-8")
+
+    rc = main(["--db", db_path, "upload", str(d), str(data), "--dt", "1700000000"])
+    assert rc == 0
+
+
+def test_upload_command_works_on_brand_new_source_with_declared_labels(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    (d / "source.json").write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id", "labels": [{"name": "email"}],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({"customer_id": ["1"], "email": ["a@b.com"]}), encoding="utf-8")
+
+    rc = main(["--db", db_path, "upload", str(d), str(data), "--dt", "1700000000"])
+    assert rc == 0
+    assert "uploaded 1 transaction(s)" in capsys.readouterr().out
+
+
+def test_upload_command_second_batch_accepts_labels_learned_from_first_load(db_path, source_dir, tmp_path, capsys):
+    # plain `ds load` first (source.json declares nothing) -- "email" becomes known from the DB
+    data1 = tmp_path / "d1.json"
+    data1.write_text(json.dumps({"customer_id": ["1"], "email": ["a@b.com"]}), encoding="utf-8")
+    main(["--db", db_path, "load", str(source_dir), str(data1), "--dt", "1700000000"])
+    capsys.readouterr()
+
+    data2 = tmp_path / "d2.json"
+    data2.write_text(json.dumps({"customer_id": ["2"], "email": ["b@b.com"]}), encoding="utf-8")
+    rc = main(["--db", db_path, "upload", str(source_dir), str(data2), "--dt", "1700100000"])
+    assert rc == 0
+    assert "uploaded 1 transaction(s)" in capsys.readouterr().out
+
+
 # --- update command ---
 
 def test_update_command_adds_and_removes_labels(db_path, tmp_path, capsys):

@@ -1,0 +1,29 @@
+--- ds upload: email/revenue объявлены заранее, типы совпадают -> проходит ---
+uploaded 2 transaction(s)
+--- ds upload: utm_source не объявлен и раньше не грузился -> отказ целиком ---
+error: unknown label 'utm_source' -- not previously loaded for 'CRM' and not declared in its source.json
+--- ds upload: revenue = 'fifty dollars' не парсится как number -> отказ целиком ---
+error: value 'fifty dollars' at row 0 does not parse as declared type 'number'
+--- ds get: только первая (успешная) загрузка реально попала в БД ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 2,
+    "include_archive": false,
+    "rows": 1,
+    "labels": [
+      "email",
+      "revenue"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "1",
+      "email": "a@x.com",
+      "revenue": "100"
+    }
+  ]
+}

@@ -15,7 +15,8 @@ from src.service import compact as svc_compact
 from src.service import config_sync as svc_config_sync
 from src.service import get as svc_get
 from src.service import selector as svc_selector
-from src.service.load import load_file
+from src.service import upload as svc_upload
+from src.service.load import load, load_file
 
 
 def _err_msg(error) -> str:
@@ -38,6 +39,35 @@ def _load(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
         return 1
 
     print(f"loaded {result.value} transaction(s)")
+    return 0
+
+
+def _upload(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    cfg_r = load_source(Path(args.source_dir))
+    if isinstance(cfg_r, Err):
+        print(f"error: {_err_msg(cfg_r.error)}", file=sys.stderr)
+        return 1
+    cfg = cfg_r.value
+
+    try:
+        data = json.loads(Path(args.data_file).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    strict_r = svc_upload.validate_known_schema(storage, data, cfg)
+    if isinstance(strict_r, Err):
+        print(f"error: {_err_msg(strict_r.error)}", file=sys.stderr)
+        return 1
+
+    dt = float(args.dt) if args.dt else time.time()
+
+    result = load(storage, data, cfg, dt)
+    if isinstance(result, Err):
+        print(f"error: {_err_msg(result.error)}", file=sys.stderr)
+        return 1
+
+    print(f"uploaded {result.value} transaction(s)")
     return 0
 
 
@@ -314,6 +344,15 @@ def main(argv: list[str] | None = None) -> int:
     load_p.add_argument("data_file", help="path to JSON data file")
     load_p.add_argument("--dt", help="unix timestamp (default: current time)")
 
+    upload_p = sub.add_parser(
+        "upload",
+        help="like load, but reject the whole file if it has an undeclared/unknown label "
+             "or a value that doesn't parse under its declared type",
+    )
+    upload_p.add_argument("source_dir", help="path to source config directory")
+    upload_p.add_argument("data_file", help="path to JSON data file")
+    upload_p.add_argument("--dt", help="unix timestamp (default: current time)")
+
     update_p = sub.add_parser(
         "update",
         help="refresh source.json's label inventory against the database's current reality",
@@ -380,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "load":
         return _load(storage, args)
+    if args.command == "upload":
+        return _upload(storage, args)
     if args.command == "update":
         return _update(storage, args)
     if args.command == "get":
