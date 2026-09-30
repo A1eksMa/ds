@@ -29,7 +29,8 @@ class Selector:
     created_until: Optional[float] = None
 
 
-def _resolve_src(storage: StoragePort, src_name: str):
+def resolve_src(storage: StoragePort, src_name: str):
+    """Side-effect-free name -> Src, shared with src/service/compact.py."""
     srcs_r = storage.src_list()
     if isinstance(srcs_r, Err):
         return srcs_r
@@ -39,7 +40,8 @@ def _resolve_src(storage: StoragePort, src_name: str):
     return Ok(src)
 
 
-def _resolve_lb_ids(storage: StoragePort, src_id: SrcId, lb_names: List[str]):
+def resolve_lb_ids(storage: StoragePort, src_id: SrcId, lb_names: List[str]):
+    """Side-effect-free names -> LbIds, shared with src/service/compact.py."""
     lbs_r = storage.lb_list(src_id)
     if isinstance(lbs_r, Err):
         return lbs_r
@@ -52,7 +54,8 @@ def _resolve_lb_ids(storage: StoragePort, src_id: SrcId, lb_names: List[str]):
     return Ok(out)
 
 
-def _resolve_id_ids(storage: StoragePort, id_values: List[str]):
+def resolve_id_ids(storage: StoragePort, id_values: List[str]):
+    """Side-effect-free values -> IdIds, shared with src/service/compact.py."""
     out: List[IdId] = []
     for value in id_values:
         r = storage.id_lookup(value)
@@ -114,7 +117,7 @@ def resolve_selector(
     when given, lb_names/id_values/where/date ranges are ignored (the CLI
     itself keeps them mutually exclusive; this function just doesn't need
     them to build a --cnt Selector)."""
-    src_r = _resolve_src(storage, src_name)
+    src_r = resolve_src(storage, src_name)
     if isinstance(src_r, Err):
         return src_r
     src_id = SrcId(src_r.value.src_id)
@@ -132,7 +135,7 @@ def resolve_selector(
 
     lb_ids: Optional[List[LbId]] = None
     if lb_names:
-        lb_ids_r = _resolve_lb_ids(storage, src_id, lb_names)
+        lb_ids_r = resolve_lb_ids(storage, src_id, lb_names)
         if isinstance(lb_ids_r, Err):
             return lb_ids_r
         lb_ids = lb_ids_r.value
@@ -144,7 +147,7 @@ def resolve_selector(
             return id_ids_r
         id_ids = id_ids_r.value
     elif id_values:
-        id_ids_r = _resolve_id_ids(storage, id_values)
+        id_ids_r = resolve_id_ids(storage, id_values)
         if isinstance(id_ids_r, Err):
             return id_ids_r
         id_ids = id_ids_r.value

@@ -45,3 +45,5 @@ UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерир
 | [`05-delete-label`](05-delete-label/) | `ds delete` — жёсткое удаление показателя из журнала (обе таблицы) |
 | [`06-label-config`](06-label-config/) | инвентарь показателей в `source.json` — `type`/`archive`/`publish` |
 | [`07-archive-where`](07-archive-where/) | `ds archive`/`ds delete` по условию на значение показателя (`--where LB=VALUE`) |
+| [`08-compact`](08-compact/) | `ds compact` — убрать записи, повторяющие уже действовавшее значение |
+| [`09-update-config`](09-update-config/) | `ds update` — синхронизировать инвентарь показателей `source.json` с базой |

@@ -8,8 +8,11 @@ from pathlib import Path
 
 from src.adapters.sqlite_adapter import SQLiteAdapter
 from src.config.loader import load_source
+from src.config.writer import write_source
 from src.domain.errors import NotFound
 from src.domain.result import Err
+from src.service import compact as svc_compact
+from src.service import config_sync as svc_config_sync
 from src.service import get as svc_get
 from src.service import selector as svc_selector
 from src.service.load import load_file
@@ -35,6 +38,33 @@ def _load(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
         return 1
 
     print(f"loaded {result.value} transaction(s)")
+    return 0
+
+
+def _update(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    cfg_r = load_source(Path(args.source_dir))
+    if isinstance(cfg_r, Err):
+        print(f"error: {_err_msg(cfg_r.error)}", file=sys.stderr)
+        return 1
+
+    sync_r = svc_config_sync.sync_labels(storage, cfg_r.value)
+    if isinstance(sync_r, Err):
+        print(f"error: {_err_msg(sync_r.error)}", file=sys.stderr)
+        return 1
+    result = sync_r.value
+
+    write_r = write_source(Path(args.source_dir) / "source.json", result.cfg)
+    if isinstance(write_r, Err):
+        print(f"error: {_err_msg(write_r.error)}", file=sys.stderr)
+        return 1
+
+    if not result.added and not result.removed:
+        print("source.json already up to date")
+        return 0
+    if result.added:
+        print(f"added: {', '.join(result.added)}")
+    if result.removed:
+        print(f"removed: {', '.join(result.removed)}")
     return 0
 
 
@@ -186,6 +216,94 @@ def _archive(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
     return _lifecycle_op(storage, args, "archived", "Archive", storage.txn_archive)
 
 
+# --- compact: find transactions that repeat the value already in effect, soft/hard-remove them ---
+
+def _label_name(storage: SQLiteAdapter, lb_id) -> str:
+    r = storage.lb_get(lb_id)
+    return r.value.name if not isinstance(r, Err) else f"lb#{int(lb_id)}"
+
+
+def _id_value(storage: SQLiteAdapter, id_id) -> str:
+    r = storage.id_get(id_id)
+    return r.value if not isinstance(r, Err) else f"id#{int(id_id)}"
+
+
+def _val_display(storage: SQLiteAdapter, val_id: int) -> str:
+    if val_id == 0:
+        return "<deleted>"
+    r = storage.val_get(val_id)
+    return r.value if not isinstance(r, Err) else f"val#{val_id}"
+
+
+def _compact(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    src_r = svc_selector.resolve_src(storage, args.src)
+    if isinstance(src_r, Err):
+        print(f"error: {_err_msg(src_r.error)}", file=sys.stderr)
+        return 1
+    src_id = src_r.value.src_id
+
+    lb_ids = None
+    if args.lb:
+        lb_ids_r = svc_selector.resolve_lb_ids(storage, src_id, args.lb)
+        if isinstance(lb_ids_r, Err):
+            print(f"error: {_err_msg(lb_ids_r.error)}", file=sys.stderr)
+            return 1
+        lb_ids = lb_ids_r.value
+
+    id_ids = None
+    if args.id:
+        id_ids_r = svc_selector.resolve_id_ids(storage, args.id)
+        if isinstance(id_ids_r, Err):
+            print(f"error: {_err_msg(id_ids_r.error)}", file=sys.stderr)
+            return 1
+        id_ids = id_ids_r.value
+
+    dup_r = svc_compact.find_duplicates(
+        storage, src_id, lb_ids, id_ids,
+        from_dt=float(args.dt_from) if args.dt_from else None,
+        until_dt=float(args.dt_until) if args.dt_until else None,
+    )
+    if isinstance(dup_r, Err):
+        print(f"error: {_err_msg(dup_r.error)}", file=sys.stderr)
+        return 1
+    duplicates = dup_r.value
+
+    verb_past, verb_imp = ("deleted", "Delete") if args.hard else ("archived", "Archive")
+    targets = duplicates if args.hard else [d for d in duplicates if d.active]
+    count = len(targets)
+
+    if count == 0:
+        print(f"{verb_past} 0 duplicate transaction(s)")
+        return 0
+
+    if not args.yes:
+        print(f"Found {count} duplicate transaction(s), e.g.:")
+        for d in targets[:5]:
+            lb_name = _label_name(storage, d.lb_id)
+            id_value = _id_value(storage, d.id_id)
+            val_display = _val_display(storage, d.val)
+            print(f"  {args.src}.{lb_name}.{id_value} @ dt={d.dt} = {val_display}")
+        if count > 5:
+            print(f"  ... and {count - 5} more")
+        try:
+            answer = input(f"{verb_imp} {count} duplicate transaction(s)? [y/N] ")
+        except (EOFError, OSError):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("aborted", file=sys.stderr)
+            return 1
+
+    cnts = [d.cnt for d in targets]
+    action = storage.txn_delete if args.hard else storage.txn_archive
+    result = action(cnts=cnts)
+    if isinstance(result, Err):
+        print(f"error: {_err_msg(result.error)}", file=sys.stderr)
+        return 1
+
+    print(f"{verb_past} {result.value} duplicate transaction(s)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ds", description="data-sources CLI")
     parser.add_argument("--db", default="data.db", help="SQLite database path (default: data.db)")
@@ -195,6 +313,12 @@ def main(argv: list[str] | None = None) -> int:
     load_p.add_argument("source_dir", help="path to source config directory")
     load_p.add_argument("data_file", help="path to JSON data file")
     load_p.add_argument("--dt", help="unix timestamp (default: current time)")
+
+    update_p = sub.add_parser(
+        "update",
+        help="refresh source.json's label inventory against the database's current reality",
+    )
+    update_p.add_argument("source_dir", help="path to source config directory")
 
     get_p = sub.add_parser("get", help="export folded per-source state as JSON")
     get_p.add_argument("--out", help="output directory (one <source>.json per source); default: stdout")
@@ -234,17 +358,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_lifecycle_args(archive_p)
 
+    compact_p = sub.add_parser(
+        "compact",
+        help="find transactions that repeat the value already in effect (no-op history) and archive/delete them",
+    )
+    compact_p.add_argument("--src", required=True, help="source name")
+    compact_p.add_argument("--lb", action="append", help="label name (repeatable); default: every label")
+    compact_p.add_argument("--id", action="append", help="key value (repeatable); default: every key")
+    compact_p.add_argument(
+        "--dt-from",
+        help="business time (dt) lower bound, unix timestamp -- the first transaction found "
+             "at/after this bound, per key, is never flagged, even if it would duplicate "
+             "something earlier that falls outside the window",
+    )
+    compact_p.add_argument("--dt-until", help="business time (dt) upper bound, unix timestamp")
+    compact_p.add_argument("--hard", action="store_true", help="physically delete duplicates instead of archiving them")
+    compact_p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
     args = parser.parse_args(argv)
     storage = SQLiteAdapter(args.db)
 
     if args.command == "load":
         return _load(storage, args)
+    if args.command == "update":
+        return _update(storage, args)
     if args.command == "get":
         return _get(storage, args)
     if args.command == "delete":
         return _delete(storage, args)
     if args.command == "archive":
         return _archive(storage, args)
+    if args.command == "compact":
+        return _compact(storage, args)
     return 0
 
 

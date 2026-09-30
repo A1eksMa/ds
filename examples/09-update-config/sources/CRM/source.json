@@ -1,0 +1,7 @@
+{
+  "name": "CRM",
+  "key_label": "customer_id",
+  "labels": [
+    { "name": "old_junk_field", "type": "text" }
+  ]
+}

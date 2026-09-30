@@ -95,6 +95,92 @@ def test_load_command_archive_flagged_label_end_to_end(db_path, tmp_path, capsys
     assert doc_full["data"][0]["internal_note"] == "only for auditors"
 
 
+# --- update command ---
+
+def test_update_command_adds_and_removes_labels(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    source_json = d / "source.json"
+    source_json.write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [{"name": "junk_field", "type": "text"}],
+    }), encoding="utf-8")
+    # junk_field never actually shows up in any loaded data; "phone" shows up
+    # ad hoc without ever being declared
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({
+        "customer_id": ["1"], "email": ["a@b.com"], "phone": ["+1"],
+    }), encoding="utf-8")
+    main(["--db", db_path, "load", str(d), str(data), "--dt", "1700000000"])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "update", str(d)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "added: email, phone" in out
+    assert "removed: junk_field" in out
+
+    doc = json.loads(source_json.read_text(encoding="utf-8"))
+    names = {l["name"] for l in doc["labels"]}
+    assert names == {"email", "phone"}
+
+
+def test_update_command_preserves_existing_label_config(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    source_json = d / "source.json"
+    source_json.write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [{"name": "revenue", "type": "number", "archive": True, "p": 0.9}],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({"customer_id": ["1"], "revenue": ["100"]}), encoding="utf-8")
+    main(["--db", db_path, "load", str(d), str(data), "--dt", "1700000000"])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "update", str(d)])
+    assert rc == 0
+    assert "already up to date" in capsys.readouterr().out
+
+    doc = json.loads(source_json.read_text(encoding="utf-8"))
+    revenue = next(l for l in doc["labels"] if l["name"] == "revenue")
+    assert revenue == {"name": "revenue", "type": "number", "archive": True, "p": 0.9}
+
+
+def test_update_command_key_label_survives_even_without_data(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    source_json = d / "source.json"
+    source_json.write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [{"name": "customer_id"}, {"name": "email"}],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({"customer_id": ["1"], "email": ["a@b.com"]}), encoding="utf-8")
+    main(["--db", db_path, "load", str(d), str(data), "--dt", "1700000000"])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "update", str(d)])
+    assert rc == 0
+    assert "already up to date" in capsys.readouterr().out
+
+    doc = json.loads(source_json.read_text(encoding="utf-8"))
+    assert {l["name"] for l in doc["labels"]} == {"customer_id", "email"}
+
+
+def test_update_command_unknown_source_is_an_error(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    (d / "source.json").write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [{"name": "email"}],
+    }), encoding="utf-8")
+    # never loaded -- CRM doesn't exist in this fresh --db yet
+    rc = main(["--db", db_path, "update", str(d)])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
 # --- get command ---
 
 def _seed(db_path, source_dir, tmp_path, capsys):
@@ -364,3 +450,85 @@ def test_archive_command_without_yes_respects_declined_prompt(db_path, source_di
     rc = main(["--db", db_path, "archive", "--src", "CRM", "--lb", "phone"])
     assert rc == 1
     assert "aborted" in capsys.readouterr().err
+
+
+# --- compact command ---
+
+def _seed_with_duplicate(db_path, source_dir, tmp_path):
+    b1 = tmp_path / "c1.json"
+    b1.write_text(json.dumps({"customer_id": ["1"], "status": ["active"]}), encoding="utf-8")
+    main(["--db", db_path, "load", "--dt", "1700000000", str(source_dir), str(b1)])
+    b2 = tmp_path / "c2.json"
+    b2.write_text(json.dumps({"customer_id": ["1"], "status": ["active"]}), encoding="utf-8")  # duplicate
+    main(["--db", db_path, "load", "--dt", "1700100000", str(source_dir), str(b2)])
+    b3 = tmp_path / "c3.json"
+    b3.write_text(json.dumps({"customer_id": ["1"], "status": ["inactive"]}), encoding="utf-8")  # real change
+    main(["--db", db_path, "load", "--dt", "1700200000", str(source_dir), str(b3)])
+
+
+def test_compact_command_soft_archives_duplicate(db_path, source_dir, tmp_path, capsys):
+    _seed_with_duplicate(db_path, source_dir, tmp_path)
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "compact", "--src", "CRM", "--yes"])
+    assert rc == 0
+    assert "archived 1 duplicate transaction(s)" in capsys.readouterr().out
+
+    storage = SQLiteAdapter(db_path)
+    src_id = next(s.src_id for s in storage.src_list().value if s.name == "CRM")
+    assert len(storage.txn_query(src_id=src_id).value) == 2          # one moved out
+    assert len(storage.txn_query(src_id=src_id, include_archive=True).value) == 3  # still there overall
+
+
+def test_compact_command_hard_deletes_with_flag(db_path, source_dir, tmp_path, capsys):
+    _seed_with_duplicate(db_path, source_dir, tmp_path)
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "compact", "--src", "CRM", "--hard", "--yes"])
+    assert rc == 0
+    assert "deleted 1 duplicate transaction(s)" in capsys.readouterr().out
+
+    storage = SQLiteAdapter(db_path)
+    src_id = next(s.src_id for s in storage.src_list().value if s.name == "CRM")
+    assert len(storage.txn_query(src_id=src_id, include_archive=True).value) == 2  # gone for good
+
+
+def test_compact_command_no_duplicates(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)  # _seed's batches never repeat a value
+    rc = main(["--db", db_path, "compact", "--src", "CRM", "--yes"])
+    assert rc == 0
+    assert "archived 0 duplicate transaction(s)" in capsys.readouterr().out
+
+
+def test_compact_command_unknown_source(db_path, source_dir, tmp_path, capsys):
+    _seed_with_duplicate(db_path, source_dir, tmp_path)
+    rc = main(["--db", db_path, "compact", "--src", "ERP", "--yes"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_compact_command_prompt_shows_sample_and_respects_decline(db_path, source_dir, tmp_path, capsys, monkeypatch):
+    _seed_with_duplicate(db_path, source_dir, tmp_path)
+    capsys.readouterr()
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+
+    rc = main(["--db", db_path, "compact", "--src", "CRM"])
+    assert rc == 1
+    out = capsys.readouterr()
+    assert "CRM.status.1" in out.out  # the sample line names source.label.key
+    assert "aborted" in out.err
+
+    storage = SQLiteAdapter(db_path)
+    src_id = next(s.src_id for s in storage.src_list().value if s.name == "CRM")
+    assert len(storage.txn_query(src_id=src_id).value) == 3  # declined -- nothing moved
+
+
+def test_compact_command_dt_from_anchors_the_window(db_path, source_dir, tmp_path, capsys):
+    # window starting at the second batch: that duplicate becomes the anchor and is spared;
+    # without --dt-from the same run would have archived it (see test above)
+    _seed_with_duplicate(db_path, source_dir, tmp_path)
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "compact", "--src", "CRM", "--dt-from", "1700100000", "--yes"])
+    assert rc == 0
+    assert "archived 0 duplicate transaction(s)" in capsys.readouterr().out

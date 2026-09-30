@@ -1,0 +1,25 @@
+--- source.json до update ---
+{
+  "name": "CRM",
+  "key_label": "customer_id",
+  "labels": [
+    { "name": "old_junk_field", "type": "text" }
+  ]
+}
+loaded 2 transaction(s)
+--- ds update: old_junk_field никогда не грузился, email/phone пришли явочным порядком ---
+added: email, phone
+removed: old_junk_field
+--- source.json после update ---
+{
+  "name": "CRM",
+  "key_label": "customer_id",
+  "labels": [
+    {
+      "name": "email"
+    },
+    {
+      "name": "phone"
+    }
+  ]
+}

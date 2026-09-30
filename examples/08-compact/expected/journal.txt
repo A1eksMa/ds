@@ -1,0 +1,4 @@
+cnt | act | dt | src | lb | id | val
+------------------------------------
+1 | PATCH | 1704067200.0 | CRM | status | 1 | active
+3 | POST | 1704240000.0 | CRM | status | 1 | inactive
