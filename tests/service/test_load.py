@@ -209,6 +209,56 @@ def test_load_created_at_is_populated(db):
     assert db.txn_query().value[0].created_at is not None
 
 
+# --- labels declared "archive": true in source.json ---
+
+def _cfg_with_labels(labels, key_label="customer_id", name="CRM"):
+    all_labels = {key_label: LabelConfig(name=key_label)}
+    all_labels.update({lb.name: lb for lb in labels})
+    return SourceConfig(name=name, key_label=key_label, labels=all_labels)
+
+
+def test_load_archive_flagged_label_goes_straight_to_archive(db):
+    cfg = _cfg_with_labels([LabelConfig(name="internal_note", archive=True)])
+    data = {"customer_id": ["1"], "internal_note": ["x"]}
+    svc_load.load(db, data, cfg, _TS)
+
+    assert db.txn_query().value == []                      # nothing active
+    assert len(db.txn_query(include_archive=True).value) == 1
+
+
+def test_load_only_flagged_label_is_archived_others_stay_active(db):
+    cfg = _cfg_with_labels([LabelConfig(name="internal_note", archive=True)])
+    data = {"customer_id": ["1"], "email": ["a@b.com"], "internal_note": ["x"]}
+    svc_load.load(db, data, cfg, _TS)
+
+    active = db.txn_query().value
+    assert len(active) == 1
+    assert db.lb_get(active[0].lb).value.name == "email"
+
+    all_txns = db.txn_query(include_archive=True).value
+    assert len(all_txns) == 2
+
+
+def test_load_undeclared_label_is_not_archived(db):
+    # no "labels" entry at all for "email" -- today's permissive on-the-fly behaviour
+    cfg = _cfg()
+    data = {"customer_id": ["1"], "email": ["a@b.com"]}
+    svc_load.load(db, data, cfg, _TS)
+
+    assert len(db.txn_query().value) == 1
+
+
+def test_load_archive_flag_considers_archived_history_for_act_detection(db):
+    """PATCH/POST detection must still work when the label is always archived."""
+    cfg = _cfg_with_labels([LabelConfig(name="internal_note", archive=True)])
+    svc_load.load(db, {"customer_id": ["1"], "internal_note": ["x"]}, cfg, _TS)
+    svc_load.load(db, {"customer_id": ["1"], "internal_note": ["y"]}, cfg, _TS + 1)
+
+    txns = sorted(db.txn_query(include_archive=True).value, key=lambda t: t.cnt)
+    assert txns[0].act == db.act_intern(Act.PATCH).value
+    assert txns[1].act == db.act_intern(Act.POST).value
+
+
 # --- ошибки валидации ---
 
 def test_load_validation_error_no_key_label(db):

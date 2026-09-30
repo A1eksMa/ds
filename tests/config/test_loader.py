@@ -33,35 +33,10 @@ def test_load_source_basic_fields(crm_dir):
     assert cfg.description == "CRM system"
 
 
-def test_load_source_no_labels_dir(crm_dir):
+def test_load_source_no_labels_key(crm_dir):
     result = load_source(crm_dir)
     assert isinstance(result, Ok)
     assert result.value.labels == {}
-
-
-def test_load_source_with_labels(crm_dir):
-    labels_dir = crm_dir / "labels"
-    for name, p in [("customer_id", 1.0), ("email", 0.8), ("phone", 0.7)]:
-        d = labels_dir / name
-        d.mkdir(parents=True)
-        _write(d / "config.json", {"name": name, "p": p})
-
-    result = load_source(crm_dir)
-    assert isinstance(result, Ok)
-    cfg = result.value
-    assert set(cfg.labels.keys()) == {"customer_id", "email", "phone"}
-    assert cfg.labels["email"].p == 0.8
-
-
-def test_load_source_label_defaults(crm_dir):
-    d = crm_dir / "labels" / "email"
-    d.mkdir(parents=True)
-    _write(d / "config.json", {"name": "email"})
-
-    result = load_source(crm_dir)
-    assert isinstance(result, Ok)
-    assert result.value.labels["email"].p == 0.5
-    assert result.value.labels["email"].description is None
 
 
 def test_load_source_defaults(tmp_path):
@@ -88,21 +63,75 @@ def test_load_source_missing_required_field(tmp_path):
     assert isinstance(result, Err)
 
 
-def test_load_source_ignores_files_in_labels_dir(crm_dir):
-    labels_dir = crm_dir / "labels"
-    labels_dir.mkdir()
-    (labels_dir / "README.txt").write_text("ignore me")
+# --- inline `labels` list (source.json), replaces the old labels/<name>/config.json dirs ---
+
+def test_load_source_with_inline_labels(crm_dir):
+    data = json.loads((crm_dir / "source.json").read_text())
+    data["labels"] = [
+        {"name": "email", "type": "text", "p": 0.8},
+        {"name": "revenue", "type": "number"},
+        {"name": "internal_flag", "type": "bool", "archive": True, "publish": False},
+    ]
+    _write(crm_dir / "source.json", data)
 
     result = load_source(crm_dir)
     assert isinstance(result, Ok)
-    assert result.value.labels == {}
+    labels = result.value.labels
+    assert set(labels.keys()) == {"email", "revenue", "internal_flag"}
+    assert labels["email"].type == "text"
+    assert labels["email"].p == 0.8
+    assert labels["revenue"].type == "number"
+    assert labels["internal_flag"].archive is True
+    assert labels["internal_flag"].publish is False
 
 
-def test_load_source_ignores_label_dir_without_config(crm_dir):
-    d = crm_dir / "labels" / "orphan"
-    d.mkdir(parents=True)
-    # нет config.json
+def test_load_source_label_defaults(crm_dir):
+    data = json.loads((crm_dir / "source.json").read_text())
+    data["labels"] = [{"name": "email"}]
+    _write(crm_dir / "source.json", data)
 
     result = load_source(crm_dir)
     assert isinstance(result, Ok)
-    assert result.value.labels == {}
+    email = result.value.labels["email"]
+    assert email.type == "text"
+    assert email.archive is False
+    assert email.publish is True
+    assert email.p == 0.5
+    assert email.description is None
+
+
+@pytest.mark.parametrize("bad_type", ["money", "TEXT", "", "int"])
+def test_load_source_rejects_invalid_label_type(crm_dir, bad_type):
+    data = json.loads((crm_dir / "source.json").read_text())
+    data["labels"] = [{"name": "x", "type": bad_type}]
+    _write(crm_dir / "source.json", data)
+
+    result = load_source(crm_dir)
+    assert isinstance(result, Err)
+
+
+def test_load_source_rejects_non_list_labels(crm_dir):
+    data = json.loads((crm_dir / "source.json").read_text())
+    data["labels"] = {"email": {"type": "text"}}
+    _write(crm_dir / "source.json", data)
+
+    result = load_source(crm_dir)
+    assert isinstance(result, Err)
+
+
+def test_load_source_rejects_non_object_label_entry(crm_dir):
+    data = json.loads((crm_dir / "source.json").read_text())
+    data["labels"] = ["email"]
+    _write(crm_dir / "source.json", data)
+
+    result = load_source(crm_dir)
+    assert isinstance(result, Err)
+
+
+def test_load_source_rejects_label_entry_missing_name(crm_dir):
+    data = json.loads((crm_dir / "source.json").read_text())
+    data["labels"] = [{"type": "text"}]
+    _write(crm_dir / "source.json", data)
+
+    result = load_source(crm_dir)
+    assert isinstance(result, Err)

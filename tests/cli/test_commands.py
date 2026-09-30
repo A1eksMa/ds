@@ -66,6 +66,35 @@ def test_load_accumulates_transactions(db_path, source_dir, tmp_path):
     assert rc == 0
 
 
+def test_load_command_archive_flagged_label_end_to_end(db_path, tmp_path, capsys):
+    d = tmp_path / "CRM"
+    d.mkdir()
+    (d / "source.json").write_text(json.dumps({
+        "name": "CRM", "key_label": "customer_id",
+        "labels": [
+            {"name": "email", "type": "text"},
+            {"name": "internal_note", "type": "text", "archive": True},
+        ],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps({
+        "customer_id": ["1"], "email": ["a@b.com"], "internal_note": ["only for auditors"],
+    }), encoding="utf-8")
+
+    rc = main(["--db", db_path, "load", str(d), str(data), "--dt", "1700000000"])
+    assert rc == 0
+    capsys.readouterr()
+
+    main(["--db", db_path, "get", "--dt", "1700000000"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["data"][0].get("email") == "a@b.com"
+    assert "internal_note" not in doc["data"][0]  # archived, not active -> not in the default fold
+
+    main(["--db", db_path, "get", "--dt", "1700000000", "--archive"])
+    doc_full = json.loads(capsys.readouterr().out)
+    assert doc_full["data"][0]["internal_note"] == "only for auditors"
+
+
 # --- get command ---
 
 def _seed(db_path, source_dir, tmp_path, capsys):

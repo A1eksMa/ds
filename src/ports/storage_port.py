@@ -65,7 +65,7 @@ class StoragePort(Protocol):
     # --- Transactions ---
 
     def txn_insert(
-        self, txn: TransactionInput
+        self, txn: TransactionInput, archived: bool = False,
     ) -> Union[Ok[Transaction], Err[StorageError]]: ...
 
     def txn_query(

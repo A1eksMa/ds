@@ -1,0 +1,6 @@
+cnt | act | dt | src | lb | id | val
+------------------------------------
+1 | PATCH | 1704067200.0 | CRM | email | 1 | a@x.com
+2 | PATCH | 1704067200.0 | CRM | revenue | 1 | 100
+4 | PATCH | 1704067200.0 | CRM | email | 2 | b@x.com
+5 | PATCH | 1704067200.0 | CRM | revenue | 2 | 250

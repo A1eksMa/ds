@@ -1,0 +1,6 @@
+{
+  "customer_id": ["1", "2"],
+  "email": ["a@x.com", "b@x.com"],
+  "revenue": ["100", "250"],
+  "internal_note": ["flagged for review", "vip"]
+}

@@ -7,17 +7,34 @@ from src.config.models import LabelConfig, SourceConfig
 from src.domain.errors import StorageError
 from src.domain.result import Err, Ok
 
+_VALID_TYPES = ("text", "number", "date", "bool")
 
-def _load_label(path: Path) -> Ok[LabelConfig] | Err[StorageError]:
+
+def _load_label_spec(entry: object) -> Ok[LabelConfig] | Err[StorageError]:
+    if not isinstance(entry, dict):
+        return Err(StorageError(f"each item in 'labels' must be an object, got {entry!r}"))
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return Ok(LabelConfig(
-            name=data["name"],
-            p=float(data.get("p", 0.5)),
-            description=data.get("description"),
+        name = entry["name"]
+    except KeyError:
+        return Err(StorageError(f"label missing required field 'name': {entry!r}"))
+
+    type_ = entry.get("type", "text")
+    if type_ not in _VALID_TYPES:
+        return Err(StorageError(
+            f"label '{name}': invalid type {type_!r} (must be one of {_VALID_TYPES})"
         ))
-    except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
-        return Err(StorageError(str(exc)))
+
+    try:
+        return Ok(LabelConfig(
+            name=name,
+            type=type_,
+            archive=bool(entry.get("archive", False)),
+            publish=bool(entry.get("publish", True)),
+            p=float(entry.get("p", 0.5)),
+            description=entry.get("description"),
+        ))
+    except (TypeError, ValueError) as exc:
+        return Err(StorageError(f"label '{name}': {exc}"))
 
 
 def load_source(source_dir: Path) -> Ok[SourceConfig] | Err[StorageError]:
@@ -26,19 +43,16 @@ def load_source(source_dir: Path) -> Ok[SourceConfig] | Err[StorageError]:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return Err(StorageError(str(exc)))
 
+    raw_labels = data.get("labels", [])
+    if not isinstance(raw_labels, list):
+        return Err(StorageError("'labels' must be an array"))
+
     labels: dict[str, LabelConfig] = {}
-    labels_dir = source_dir / "labels"
-    if labels_dir.exists():
-        for label_dir in sorted(labels_dir.iterdir()):
-            if not label_dir.is_dir():
-                continue
-            config_file = label_dir / "config.json"
-            if not config_file.exists():
-                continue
-            result = _load_label(config_file)
-            if isinstance(result, Err):
-                return result
-            labels[result.value.name] = result.value
+    for entry in raw_labels:
+        result = _load_label_spec(entry)
+        if isinstance(result, Err):
+            return result
+        labels[result.value.name] = result.value
 
     try:
         return Ok(SourceConfig(

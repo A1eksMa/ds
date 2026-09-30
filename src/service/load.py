@@ -34,6 +34,11 @@ def load(
     - raw value is null            -> DELETE
     - no prior value for (lb, id)  -> PATCH (first appearance, or reappearance after a delete)
     - a prior value exists         -> POST  (overwriting an existing value)
+
+    A column whose label is declared `"archive": true` in cfg.labels is inserted
+    straight into transactions_archive instead of transactions (act detection still
+    sees archived history via txn_last_values, so PATCH/POST stays correct either way).
+    Columns not declared in cfg.labels are unaffected -- auto-interned as before.
     """
     val_result = tbl_validator.validate_table(data, cfg)
     if isinstance(val_result, Err):
@@ -115,11 +120,14 @@ def load(
                 storage.rollback()
                 return act_r
 
+            label_cfg = cfg.labels.get(col)
+            archived = label_cfg is not None and label_cfg.archive
+
             txn_r = storage.txn_insert(TransactionInput(
                 act=act_r.value, dt=dt,
                 src=src_id, lb=lb_id, id=id_id,
                 p=1.0, val=val_id,
-            ))
+            ), archived=archived)
             if isinstance(txn_r, Err):
                 storage.rollback()
                 return txn_r

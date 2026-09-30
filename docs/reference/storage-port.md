@@ -51,7 +51,7 @@
 
 | Метод | Смысл |
 |---|---|
-| `txn_insert(TransactionInput)` | вставить запись; вернуть полный `Transaction` (с присвоенными `cnt`, `created_at`) |
+| `txn_insert(TransactionInput, archived=False)` | вставить запись; вернуть полный `Transaction` (с присвоенными `cnt`, `created_at`). `archived=True` — писать сразу в `transactions_archive`, минуя активную таблицу (см. `source.json`'s `labels[].archive`, [`config-format.md`](config-format.md)) |
 | `txn_query(src_id=None, lb_id=None, id_id=None, until_dt=None, from_cnt=None, include_archive=False)` | выборка журнала с фильтрами; `until_dt` — срез «машины времени»; `from_cnt` — с какого `cnt`; `include_archive` — читать `transactions_full` |
 | `txn_archive(until_dt)` | переместить в архив все транзакции с `dt <= until_dt`; вернуть число перемещённых |
 | `txn_delete(src_id, lb_id=None)` | физически удалить транзакции источника (опц. одной метки); вернуть число удалённых |

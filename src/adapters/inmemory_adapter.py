@@ -212,7 +212,7 @@ class InMemoryAdapter:
     # --- Transactions ---
 
     def txn_insert(
-        self, txn: TransactionInput
+        self, txn: TransactionInput, archived: bool = False,
     ) -> Union[Ok[Transaction], Err[StorageError]]:
         cnt = CntId(self._next_cnt())
         created_at = self._clock.now()
@@ -223,7 +223,7 @@ class InMemoryAdapter:
             "p": txn.p,
             "created_at": created_at,
         }
-        self._transactions.append(row)
+        (self._archive if archived else self._transactions).append(row)
         return Ok(Transaction(
             cnt=cnt, act=txn.act, dt=txn.dt,
             src=txn.src, lb=txn.lb, id=txn.id,

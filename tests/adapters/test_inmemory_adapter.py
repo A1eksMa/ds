@@ -233,6 +233,22 @@ def test_txn_insert_increments_cnt(db):
     assert t2.cnt > t1.cnt
 
 
+def test_txn_insert_archived_goes_straight_to_archive(db):
+    src_id = _src(db)
+    lb_id = db.lb_intern("x", src_id).value
+    act_id = db.act_intern(Act.POST).value
+    id_id = db.id_intern("1").value
+    val_id = db.val_intern("v").value
+
+    result = db.txn_insert(
+        TransactionInput(act=act_id, dt=_TS, src=src_id, lb=lb_id, id=id_id, p=1.0, val=val_id),
+        archived=True,
+    )
+    assert isinstance(result, Ok)
+    assert db.txn_query().value == []
+    assert len(db.txn_query(include_archive=True).value) == 1
+
+
 def test_txn_query_returns_all(db):
     src_id = _src(db)
     lb_id = db.lb_intern("x", src_id).value

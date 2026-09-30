@@ -1,0 +1,9 @@
+{
+  "name": "CRM",
+  "key_label": "customer_id",
+  "labels": [
+    { "name": "email", "type": "text" },
+    { "name": "revenue", "type": "number" },
+    { "name": "internal_note", "type": "text", "archive": true, "publish": false }
+  ]
+}

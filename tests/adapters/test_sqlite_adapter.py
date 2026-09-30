@@ -202,6 +202,22 @@ def test_txn_insert_cnt_is_unique(db):
     assert t1.cnt != t2.cnt
 
 
+def test_txn_insert_archived_goes_straight_to_archive(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+
+    result = db.txn_insert(
+        TransactionInput(act=act, dt=_TS, src=src, lb=lb, id=id_, p=1.0, val=val),
+        archived=True,
+    )
+    assert isinstance(result, Ok)
+    assert db.txn_query().value == []
+    assert len(db.txn_query(include_archive=True).value) == 1
+
+
 def test_txn_query_filters_by_src(db):
     src_a = _src(db, "A")
     src_b = _src(db, "B")

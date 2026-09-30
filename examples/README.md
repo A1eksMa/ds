@@ -43,3 +43,4 @@ UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерир
 | [`03-delete-semantics`](03-delete-semantics/) | `null` → `DELETE`, затем повторное появление → `PATCH` |
 | [`04-get`](04-get/) | свёртка журнала в состояние на заданную дату, `ds get` |
 | [`05-delete-label`](05-delete-label/) | `ds delete` — жёсткое удаление показателя из журнала (обе таблицы) |
+| [`06-label-config`](06-label-config/) | инвентарь показателей в `source.json` — `type`/`archive`/`publish` |

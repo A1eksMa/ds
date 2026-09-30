@@ -1,0 +1,61 @@
+loaded 6 transaction(s)
+--- ds get: internal_note НЕ в активной выборке (ушло сразу в архив при load) ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 5,
+    "include_archive": false,
+    "rows": 2,
+    "labels": [
+      "email",
+      "internal_note",
+      "revenue"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "1",
+      "email": "a@x.com",
+      "revenue": "100"
+    },
+    {
+      "customer_id": "2",
+      "email": "b@x.com",
+      "revenue": "250"
+    }
+  ]
+}
+--- ds get --archive: internal_note виден при явном запросе архива ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 6,
+    "include_archive": true,
+    "rows": 2,
+    "labels": [
+      "email",
+      "internal_note",
+      "revenue"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "1",
+      "email": "a@x.com",
+      "internal_note": "flagged for review",
+      "revenue": "100"
+    },
+    {
+      "customer_id": "2",
+      "email": "b@x.com",
+      "internal_note": "vip",
+      "revenue": "250"
+    }
+  ]
+}

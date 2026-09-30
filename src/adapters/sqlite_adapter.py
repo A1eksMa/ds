@@ -372,14 +372,15 @@ class SQLiteAdapter:
     # --- Transactions ---
 
     def txn_insert(
-        self, txn: TransactionInput
+        self, txn: TransactionInput, archived: bool = False,
     ) -> Union[Ok[Transaction], Err[StorageError]]:
         try:
+            table = "transactions_archive" if archived else "transactions"
             created_at = self._clock.now()
             cur = self._conn.execute("INSERT INTO cnts (created_at) VALUES (?)", (created_at,))
             cnt_id = cur.lastrowid
             self._conn.execute(
-                "INSERT INTO transactions (cnt, act, dt, src, lb, id, val, p, created_at) "
+                f"INSERT INTO {table} (cnt, act, dt, src, lb, id, val, p, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     cnt_id,
