@@ -66,6 +66,18 @@ class StoragePort(Protocol):
 
     def lb_list(self, src_id: Optional[SrcId] = None) -> Union[Ok[List[Lb]], Err[StorageError]]: ...
 
+    # `ds mv`: repoints every transaction (active + archived) referencing
+    # from_lb_id onto into_lb_id -- both its lb and src columns, since
+    # into_lb_id may belong to a different source than from_lb_id did -- then
+    # deletes the now-orphaned from_lb_id row from lbs (nothing references it
+    # anymore, so this never trips the lbs FK's ON DELETE RESTRICT). Returns
+    # the number of transactions moved. Caller resolves/creates into_lb_id
+    # first (see src/service/mv.py) -- this primitive assumes it already
+    # exists and never creates a pool entry itself.
+    def lb_merge(
+        self, from_lb_id: LbId, into_lb_id: LbId,
+    ) -> Union[Ok[int], Err[StorageError]]: ...
+
     # --- Transactions ---
 
     def txn_insert(

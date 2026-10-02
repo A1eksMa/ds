@@ -245,6 +245,22 @@ class InMemoryAdapter:
             ))
         return Ok(result)
 
+    def lb_merge(
+        self, from_lb_id: LbId, into_lb_id: LbId,
+    ) -> Union[Ok[int], Err[StorageError]]:
+        into_src_id = self._lbs[int(into_lb_id)]["src"]
+        moved = 0
+        for pool in (self._transactions, self._archive):
+            for row in pool:
+                if row["lb"] == int(from_lb_id):
+                    row["lb"] = int(into_lb_id)
+                    row["src"] = into_src_id
+                    moved += 1
+        old = self._lbs.pop(int(from_lb_id), None)
+        if old is not None:
+            self._lb_names.pop((old["src"], old["name"]), None)
+        return Ok(moved)
+
     # --- Transactions ---
 
     def txn_insert(

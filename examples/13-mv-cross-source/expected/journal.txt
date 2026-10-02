@@ -1,0 +1,5 @@
+cnt | act | dt | src | lb | id | val
+------------------------------------
+1 | PATCH | 1704067200.0 | ERP | manufacturer | 101 | Acme
+2 | PATCH | 1704067200.0 | ERP | manufacturer | 102 | Globex
+3 | PATCH | 1704067200.0 | ERP | status | 201 | shipped

@@ -1,0 +1,73 @@
+loaded 2 transaction(s)
+loaded 1 transaction(s)
+--- ds get --src CRM: manufacturer пока в CRM ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 2,
+    "include_archive": false,
+    "rows": 2,
+    "labels": [
+      "manufacturer"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "manufacturer": "Acme"
+    },
+    {
+      "customer_id": "102",
+      "manufacturer": "Globex"
+    }
+  ]
+}
+--- ds mv --src CRM --lb manufacturer --to-src ERP --to-lb manufacturer --yes ---
+moved 2 transaction(s): CRM.manufacturer -> ERP.manufacturer (new label)
+--- ds get --src CRM: manufacturer больше не существует в CRM ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 0,
+    "include_archive": false,
+    "rows": 0,
+    "labels": []
+  },
+  "data": []
+}
+--- ds get --src ERP: manufacturer теперь здесь, рядом с уже бывшими данными ---
+{
+  "meta": {
+    "name": "ERP",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 3,
+    "include_archive": false,
+    "rows": 3,
+    "labels": [
+      "manufacturer",
+      "status"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "manufacturer": "Acme"
+    },
+    {
+      "customer_id": "102",
+      "manufacturer": "Globex"
+    },
+    {
+      "customer_id": "201",
+      "status": "shipped"
+    }
+  ]
+}

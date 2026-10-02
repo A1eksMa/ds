@@ -446,6 +446,35 @@ class SQLiteAdapter:
         except sqlite3.Error as exc:
             return Err(StorageError(str(exc)))
 
+    def lb_merge(
+        self, from_lb_id: LbId, into_lb_id: LbId,
+    ) -> Union[Ok[int], Err[StorageError]]:
+        try:
+            self._conn.execute("BEGIN")
+            into_src_id = self._conn.execute(
+                "SELECT src_id FROM lbs WHERE lb_id = ?", (int(into_lb_id),)
+            ).fetchone()[0]
+            # fetched up front so the _lb_cache entry can be evicted below -- otherwise
+            # a later lb_intern(old_name, old_src_id) (e.g. a stray `ds load` still using
+            # the retired name) would resolve to the lb_id this call is about to delete
+            from_src_id, from_name = self._conn.execute(
+                "SELECT src_id, name FROM lbs WHERE lb_id = ?", (int(from_lb_id),)
+            ).fetchone()
+            moved = 0
+            for table in ("transactions", "transactions_archive"):
+                cur = self._conn.execute(
+                    f"UPDATE {table} SET lb = ?, src = ? WHERE lb = ?",
+                    (int(into_lb_id), into_src_id, int(from_lb_id)),
+                )
+                moved += cur.rowcount
+            self._conn.execute("DELETE FROM lbs WHERE lb_id = ?", (int(from_lb_id),))
+            self._conn.commit()
+            self._lb_cache.pop((from_src_id, from_name), None)
+            return Ok(moved)
+        except sqlite3.Error as exc:
+            self._conn.rollback()
+            return Err(StorageError(str(exc)))
+
     # --- Transactions ---
 
     def txn_insert(

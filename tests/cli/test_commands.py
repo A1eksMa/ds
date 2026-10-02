@@ -607,6 +607,100 @@ def test_unarchive_command_without_yes_respects_declined_prompt(db_path, source_
     assert "aborted" in capsys.readouterr().err
 
 
+# --- mv command ---
+
+def test_mv_command_renames_within_same_source(db_path, source_dir, tmp_path, capsys):
+    d1 = tmp_path / "b1.json"
+    d1.write_text(json.dumps({
+        "customer_id": ["101", "102"], "old_name": ["a", "b"],
+    }), encoding="utf-8")
+    main(["--db", db_path, "load", "--dt", "1700000000", str(source_dir), str(d1)])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "mv", "--src", "CRM", "--lb", "old_name", "--to-lb", "new_name", "--yes"])
+    assert rc == 0
+    assert "moved 2 transaction(s)" in capsys.readouterr().out
+
+    rc = main(["--db", db_path, "get", "--src", "CRM"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["meta"]["labels"] == ["new_name"]
+    assert {r["new_name"] for r in doc["data"]} == {"a", "b"}
+
+
+def test_mv_command_merges_transition_period(db_path, source_dir, tmp_path, capsys):
+    d1 = tmp_path / "b1.json"
+    d1.write_text(json.dumps({"customer_id": ["101"], "old_name": ["a"]}), encoding="utf-8")
+    main(["--db", db_path, "load", "--dt", "1700000000", str(source_dir), str(d1)])
+    d2 = tmp_path / "b2.json"
+    d2.write_text(json.dumps({"customer_id": ["102"], "new_name": ["b"]}), encoding="utf-8")
+    main(["--db", db_path, "load", "--dt", "1700100000", str(source_dir), str(d2)])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "mv", "--src", "CRM", "--lb", "old_name", "--to-lb", "new_name", "--yes"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "moved 1 transaction(s)" in out
+    assert "merged into existing label" in out
+
+    rc = main(["--db", db_path, "get", "--src", "CRM"])
+    doc = json.loads(capsys.readouterr().out)
+    values = {r["customer_id"]: r["new_name"] for r in doc["data"]}
+    assert values == {"101": "a", "102": "b"}
+
+
+def test_mv_command_to_new_source_creates_it(db_path, source_dir, tmp_path, capsys):
+    d1 = tmp_path / "b1.json"
+    d1.write_text(json.dumps({"customer_id": ["101"], "old_name": ["a"]}), encoding="utf-8")
+    main(["--db", db_path, "load", "--dt", "1700000000", str(source_dir), str(d1)])
+    capsys.readouterr()
+
+    rc = main([
+        "--db", db_path, "mv", "--src", "CRM", "--lb", "old_name",
+        "--to-src", "ERP", "--to-lb", "new_name", "--yes",
+    ])
+    assert rc == 0
+    assert "moved 1 transaction(s)" in capsys.readouterr().out
+
+    rc = main(["--db", db_path, "get", "--src", "ERP"])
+    doc = json.loads(capsys.readouterr().out)
+    # ERP didn't exist before `mv` created it -- its key_label is only bootstrapped by
+    # `ds load`'s first batch (see service/load.py), so `ds get` falls back to "id"
+    assert doc["data"] == [{"id": "101", "new_name": "a"}]
+
+
+def test_mv_command_unknown_source(db_path, source_dir, tmp_path, capsys):
+    main(["--db", db_path, "mv", "--src", "ERP", "--lb", "x", "--to-lb", "y", "--yes"])
+    assert "not found" in capsys.readouterr().err
+
+
+def test_mv_command_refuses_key_label(db_path, source_dir, tmp_path, capsys):
+    d1 = tmp_path / "b1.json"
+    d1.write_text(json.dumps({"customer_id": ["101"]}), encoding="utf-8")
+    main(["--db", db_path, "load", str(source_dir), str(d1)])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "mv", "--src", "CRM", "--lb", "customer_id", "--to-lb", "new_name", "--yes"])
+    assert rc == 1
+    assert "key label" in capsys.readouterr().err
+
+
+def test_mv_command_without_yes_respects_declined_prompt(db_path, source_dir, tmp_path, capsys, monkeypatch):
+    d1 = tmp_path / "b1.json"
+    d1.write_text(json.dumps({"customer_id": ["101"], "old_name": ["a"]}), encoding="utf-8")
+    main(["--db", db_path, "load", str(source_dir), str(d1)])
+    capsys.readouterr()
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    rc = main(["--db", db_path, "mv", "--src", "CRM", "--lb", "old_name", "--to-lb", "new_name"])
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err
+
+    # declining must leave the database untouched
+    rc = main(["--db", db_path, "get", "--src", "CRM"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["meta"]["labels"] == ["old_name"]
+
+
 # --- compact command ---
 
 def _seed_with_duplicate(db_path, source_dir, tmp_path):

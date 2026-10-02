@@ -10,21 +10,22 @@
 
 | Тема | Что | Было в коде | Заметки |
 |---|---|---|---|
-| [entity-curation](entity-curation.md) | merge / split / delete / rename над `srcs`/`lbs`/`ids`/`vals` | нет | сначала решить [ADR-0009](../decisions/0009-entity-curation-rewrite-vs-events.md) |
+| [entity-curation](entity-curation.md) | merge / split / delete / rename над `srcs`/`lbs`/`ids`/`vals` | rename/merge `lbs` (`ds mv`) — да; остальное — нет | [ADR-0009](../decisions/0009-entity-curation-rewrite-vs-events.md) решён для `lbs`, остальное требует отдельного рассмотрения |
 | [lifecycle-cli](lifecycle-cli.md) | вывести `txn_archive` / `txn_delete` в CLI, дедупликация, восстановление из архива | `delete`/`archive`/`unarchive`/`compact` — да (общий селектор src/lb/id/where/cnt/даты) | готово |
 | [schema-migration](schema-migration.md) | инструменты миграции при изменении схемы ядра | нет | |
 | [optimization](optimization.md) | индексы, `VACUUM`, чистка осиротевших записей пулов | базовые индексы — да; дедупликация транзакций переехала в `lifecycle-cli` (`ds compact`) | |
 
 Сделано: выдача состояния (`ds get`, Level 1 свёртка), жёсткое удаление, архивирование,
 восстановление из архива и дедупликация (`ds delete`/`ds archive`/`ds unarchive`/`ds compact`,
-общий селектор) — см. [`../reference/cli.md`](../reference/cli.md),
+общий селектор), переименование/слияние показателя и перенос его истории между источниками
+(`ds mv`) — см. [`../reference/cli.md`](../reference/cli.md),
 [`../reference/get-output-format.md`](../reference/get-output-format.md).
 
 ## Разумный порядок
 
 Из прежнего `TODO.md` и логики зависимостей: `lifecycle-cli` → `entity-curation` (самый
-большой blast radius, требует ADR-0009) → `schema-migration` / `optimization` по мере
-необходимости. Путь чтения (`ds get`) уже есть.
+большой blast radius для того, что в нём осталось — `srcs`/`ids`/`vals`, split) →
+`schema-migration` / `optimization` по мере необходимости. Путь чтения (`ds get`) уже есть.
 
 ## Не в этом ядре
 

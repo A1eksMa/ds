@@ -14,6 +14,7 @@ from src.domain.result import Err
 from src.service import compact as svc_compact
 from src.service import config_sync as svc_config_sync
 from src.service import get as svc_get
+from src.service import mv as svc_mv
 from src.service import selector as svc_selector
 from src.service import upload as svc_upload
 from src.service.load import load, load_file
@@ -250,6 +251,46 @@ def _unarchive(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
     return _lifecycle_op(storage, args, "unarchived", "Unarchive", storage.txn_unarchive)
 
 
+# --- mv: rename/merge a label across names and/or sources ---
+
+def _mv(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    plan_r = svc_mv.resolve_mv(
+        storage, src_name=args.src, lb_name=args.lb,
+        to_src_name=args.to_src, to_lb_name=args.to_lb,
+    )
+    if isinstance(plan_r, Err):
+        print(f"error: {_err_msg(plan_r.error)}", file=sys.stderr)
+        return 1
+    plan = plan_r.value
+
+    count_r = svc_mv.count_matching(storage, plan)
+    if isinstance(count_r, Err):
+        print(f"error: {_err_msg(count_r.error)}", file=sys.stderr)
+        return 1
+    count = count_r.value
+
+    what = f"{args.src}.{args.lb} -> {plan.to_src_name}.{plan.to_lb_name}"
+    if not args.yes:
+        try:
+            answer = input(f"Move {count} transaction(s) ({what})? [y/N] ")
+        except (EOFError, OSError):
+            # no readable stdin (piped/closed input, or a captured test run) -> never
+            # proceed with a journal rewrite just because we couldn't ask
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("aborted", file=sys.stderr)
+            return 1
+
+    result = svc_mv.apply_mv(storage, plan)
+    if isinstance(result, Err):
+        print(f"error: {_err_msg(result.error)}", file=sys.stderr)
+        return 1
+
+    note = "merged into existing label" if plan.into_lb_id is not None else "new label"
+    print(f"moved {result.value} transaction(s): {what} ({note})")
+    return 0
+
+
 # --- compact: find transactions that repeat the value already in effect, soft/hard-remove them ---
 
 def _label_name(storage: SQLiteAdapter, lb_id) -> str:
@@ -406,6 +447,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_lifecycle_args(unarchive_p)
 
+    mv_p = sub.add_parser(
+        "mv",
+        help="rename/merge a label across names and/or sources -- rewrites lb/src on "
+             "every matching transaction (active + archived)",
+    )
+    mv_p.add_argument("--src", required=True, help="current source name")
+    mv_p.add_argument("--lb", required=True, help="current label name")
+    mv_p.add_argument(
+        "--to-src",
+        help="destination source name; default: same as --src. Created automatically if it "
+             "doesn't exist yet",
+    )
+    mv_p.add_argument(
+        "--to-lb", required=True,
+        help="destination label name. Created automatically if new; if it already exists, "
+             "its history is merged with --lb's",
+    )
+    mv_p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+
     compact_p = sub.add_parser(
         "compact",
         help="find transactions that repeat the value already in effect (no-op history) and archive/delete them",
@@ -440,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
         return _archive(storage, args)
     if args.command == "unarchive":
         return _unarchive(storage, args)
+    if args.command == "mv":
+        return _mv(storage, args)
     if args.command == "compact":
         return _compact(storage, args)
     return 0

@@ -323,6 +323,60 @@ def test_txn_unarchive_preserves_created_at(db):
     assert restored.created_at == inserted.created_at
 
 
+def test_lb_merge_moves_active_and_archived_and_retires_old_label(db):
+    src = _src(db)
+    old_lb = db.lb_intern("old", src).value
+    new_lb = db.lb_intern("new", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+
+    _insert(db, src, old_lb, id_, val, act, dt=_TS)
+    _insert(db, src, old_lb, id_, val, act, dt=_TS + 1)
+    db.txn_archive(until_dt=_TS + 0.5)  # archive the first of the two
+
+    result = db.lb_merge(old_lb, new_lb)
+    assert isinstance(result, Ok)
+    assert result.value == 2
+
+    full = db.txn_query(include_archive=True).value
+    assert len(full) == 2
+    assert all(int(t.lb) == int(new_lb) for t in full)
+
+    assert isinstance(db.lb_get(old_lb), Err)  # retired, not left orphaned
+
+
+def test_lb_merge_evicts_stale_lb_cache_entry(db):
+    # regression: lb_intern caches (src_id, name) -> lb_id; without evicting the old
+    # entry on merge, re-using the retired name would resolve to a deleted lb_id and
+    # blow up on the next insert's FK check
+    src = _src(db)
+    old_lb = db.lb_intern("old", src).value
+    new_lb = db.lb_intern("new", src).value
+    db.lb_merge(old_lb, new_lb)
+
+    reinterned = db.lb_intern("old", src).value
+    assert reinterned != old_lb
+    assert isinstance(db.lb_get(LbId(reinterned)), Ok)
+
+
+def test_lb_merge_across_sources_updates_src_column(db):
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    old_lb = db.lb_intern("old", src_a).value
+    new_lb = db.lb_intern("new", src_b).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src_a, old_lb, id_, val, act, dt=_TS)
+
+    db.lb_merge(old_lb, new_lb)
+
+    txn = db.txn_query().value[0]
+    assert int(txn.lb) == int(new_lb)
+    assert int(txn.src) == int(src_b)
+
+
 def test_txn_delete_removes_from_both_tables(db):
     src = _src(db)
     lb = db.lb_intern("x", src).value
