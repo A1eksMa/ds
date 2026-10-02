@@ -11,13 +11,14 @@
 | Тема | Что | Было в коде | Заметки |
 |---|---|---|---|
 | [entity-curation](entity-curation.md) | merge / split / delete / rename над `srcs`/`lbs`/`ids`/`vals` | нет | сначала решить [ADR-0009](../decisions/0009-entity-curation-rewrite-vs-events.md) |
-| [lifecycle-cli](lifecycle-cli.md) | вывести `txn_archive` / `txn_delete` в CLI, дедупликация | `delete`/`archive`/`compact` — да (общий селектор src/lb/id/where/cnt/даты); `restore` — нет | |
+| [lifecycle-cli](lifecycle-cli.md) | вывести `txn_archive` / `txn_delete` в CLI, дедупликация, восстановление из архива | `delete`/`archive`/`unarchive`/`compact` — да (общий селектор src/lb/id/where/cnt/даты) | готово |
 | [schema-migration](schema-migration.md) | инструменты миграции при изменении схемы ядра | нет | |
 | [optimization](optimization.md) | индексы, `VACUUM`, чистка осиротевших записей пулов | базовые индексы — да; дедупликация транзакций переехала в `lifecycle-cli` (`ds compact`) | |
 
-Сделано: выдача состояния (`ds get`, Level 1 свёртка), жёсткое удаление, архивирование и
-дедупликация (`ds delete`/`ds archive`/`ds compact`, общий селектор) — см.
-[`../reference/cli.md`](../reference/cli.md), [`../reference/get-output-format.md`](../reference/get-output-format.md).
+Сделано: выдача состояния (`ds get`, Level 1 свёртка), жёсткое удаление, архивирование,
+восстановление из архива и дедупликация (`ds delete`/`ds archive`/`ds unarchive`/`ds compact`,
+общий селектор) — см. [`../reference/cli.md`](../reference/cli.md),
+[`../reference/get-output-format.md`](../reference/get-output-format.md).
 
 ## Разумный порядок
 

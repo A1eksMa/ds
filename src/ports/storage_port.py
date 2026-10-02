@@ -108,6 +108,20 @@ class StoragePort(Protocol):
         created_until: Optional[float] = None,
     ) -> Union[Ok[int], Err[StorageError]]: ...
 
+    # Mirror of txn_archive: moves matching transactions from transactions_archive
+    # back into transactions. Same filter set, same "no filters -> everything" rule.
+    def txn_unarchive(
+        self,
+        src_id: Optional[SrcId] = None,
+        lb_ids: Optional[List[LbId]] = None,
+        id_ids: Optional[List[IdId]] = None,
+        cnts: Optional[List[CntId]] = None,
+        from_dt: Optional[float] = None,
+        until_dt: Optional[float] = None,
+        created_from: Optional[float] = None,
+        created_until: Optional[float] = None,
+    ) -> Union[Ok[int], Err[StorageError]]: ...
+
     # Same filter set again: physically removes matching transactions from
     # BOTH transactions and transactions_archive; returns the total removed
     # across both tables.

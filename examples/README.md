@@ -48,3 +48,4 @@ UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерир
 | [`08-compact`](08-compact/) | `ds compact` — убрать записи, повторяющие уже действовавшее значение |
 | [`09-update-config`](09-update-config/) | `ds update` — синхронизировать инвентарь показателей `source.json` с базой |
 | [`10-upload-strict`](10-upload-strict/) | `ds upload` — строгая загрузка: отказ целиком при новом показателе или несовпадении типа |
+| [`11-unarchive-where`](11-unarchive-where/) | `ds unarchive` — зеркало `ds archive`: вернуть архивные транзакции обратно, тот же `--where` |

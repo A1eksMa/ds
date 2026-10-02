@@ -1,0 +1,8 @@
+cnt | act | dt | src | lb | id | val
+------------------------------------
+1 | PATCH | 1704067200.0 | CRM | email | 101 | alice@e.com
+2 | PATCH | 1704067200.0 | CRM | is_test_account | 101 | false
+3 | PATCH | 1704067200.0 | CRM | email | 102 | bob@e.com
+4 | PATCH | 1704067200.0 | CRM | is_test_account | 102 | true
+5 | PATCH | 1704067200.0 | CRM | email | 103 | carol@e.com
+6 | PATCH | 1704067200.0 | CRM | is_test_account | 103 | false

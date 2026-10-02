@@ -569,6 +569,43 @@ class SQLiteAdapter:
             self._conn.rollback()
             return Err(StorageError(str(exc)))
 
+    def txn_unarchive(
+        self,
+        src_id: Optional[SrcId] = None,
+        lb_ids: Optional[List[LbId]] = None,
+        id_ids: Optional[List[IdId]] = None,
+        cnts: Optional[List[CntId]] = None,
+        from_dt: Optional[float] = None,
+        until_dt: Optional[float] = None,
+        created_from: Optional[float] = None,
+        created_until: Optional[float] = None,
+    ) -> Union[Ok[int], Err[StorageError]]:
+        try:
+            self._conn.execute("BEGIN")
+            lb_list = sorted({int(x) for x in lb_ids}) if lb_ids is not None else None
+            cnt_list = sorted({int(x) for x in cnts}) if cnts is not None else None
+            moved = 0
+            for id_chunk in _id_chunks(list(id_ids) if id_ids is not None else None):
+                clauses, params = _filter_clauses(
+                    int(src_id) if src_id is not None else None,
+                    lb_list, id_chunk, cnt_list,
+                    from_dt, until_dt, created_from, created_until,
+                )
+                where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+                cur = self._conn.execute(
+                    "INSERT INTO transactions "
+                    "SELECT cnt, act, dt, src, lb, id, val, p, created_at "
+                    f"FROM transactions_archive {where}",
+                    params,
+                )
+                moved += cur.rowcount
+                self._conn.execute(f"DELETE FROM transactions_archive {where}", params)
+            self._conn.commit()
+            return Ok(moved)
+        except sqlite3.Error as exc:
+            self._conn.rollback()
+            return Err(StorageError(str(exc)))
+
     def txn_delete(
         self,
         src_id: Optional[SrcId] = None,

@@ -1,40 +1,40 @@
 # [roadmap] Жизненный цикл данных в CLI
 
-> **Статус: `delete`/`archive`/`compact` — готовы.** `delete`/`archive` — общий селектор
-> (`src/service/selector.py`): источник (обязателен), показатели, ключи (явным списком или по
-> условию на текущее значение другого показателя — `--where`), конкретные записи по `cnt`,
-> диапазоны `dt`/`created_at`. `compact` (`src/service/compact.py`) — дедупликация: находит
+> **Статус: `delete`/`archive`/`unarchive`/`compact` — готовы.** `delete`/`archive`/`unarchive` —
+> общий селектор (`src/service/selector.py`): источник (обязателен), показатели, ключи (явным
+> списком или по условию на текущее значение другого показателя — `--where`), конкретные записи
+> по `cnt`, диапазоны `dt`/`created_at`. `unarchive` (`StoragePort.txn_unarchive`) — точное
+> зеркало `txn_archive`: переносит подходящие записи из `transactions_archive` обратно в
+> `transactions`, `cnt` не меняется. `compact` (`src/service/compact.py`) — дедупликация: находит
 > транзакции, повторяющие уже действовавшее значение (не меняют `ds get` ни на один момент
 > времени), и архивирует/удаляет их — вычисляет список `cnt` и передаёт его в уже готовые
 > `txn_archive(cnts=...)`/`txn_delete(cnts=...)`, новых примитивов хранилища не потребовалось.
-> См. [`../reference/cli.md#ds-delete--ds-archive`](../reference/cli.md#ds-delete--ds-archive),
+> См. [`../reference/cli.md#ds-delete--ds-archive--ds-unarchive`](../reference/cli.md#ds-delete--ds-archive--ds-unarchive),
 > [`../reference/cli.md#ds-compact`](../reference/cli.md#ds-compact),
 > [`../../examples/05-delete-label/`](../../examples/05-delete-label/),
 > [`../../examples/07-archive-where/`](../../examples/07-archive-where/),
-> [`../../examples/08-compact/`](../../examples/08-compact/). Заодно исправлен баг обоих
-> адаптеров (в коммите, добавившем `delete`): `txn_delete` возвращал число удалённых строк
-> только из активной таблицы, молча занижая счётчик, когда совпадающие строки были ещё и в
+> [`../../examples/08-compact/`](../../examples/08-compact/),
+> [`../../examples/11-unarchive-where/`](../../examples/11-unarchive-where/). Заодно исправлен
+> баг обоих адаптеров (в коммите, добавившем `delete`): `txn_delete` возвращал число удалённых
+> строк только из активной таблицы, молча занижая счётчик, когда совпадающие строки были ещё и в
 > архиве.
->
-> **`restore`** (обратный перенос из архива) **— не сделан**. Пока — только из Python,
-> см. [`../guides/archiving-via-python.md`](../guides/archiving-via-python.md).
 
 ## Что нужно (осталось)
 
-| Команда (черновой вид) | Метод порта | Смысл |
-|---|---|---|
-| `ds restore <тот же селектор>` (?) | — | обратный перенос из архива — метода пока нет |
+Ничего из изначально запланированного здесь — `restore` (обратный перенос из архива) сделан под
+именем `unarchive`, см. статус выше.
 
 ## Как устроено (для справки будущим изменениям)
 
-`txn_query`/`txn_archive`/`txn_delete` в порту принимают один и тот же набор
+`txn_query`/`txn_archive`/`txn_unarchive`/`txn_delete` в порту принимают один и тот же набор
 фильтров — `src_id`, `lb_ids`, `id_ids`, `cnts`, `from_dt`/`until_dt` (бизнес-время),
 `created_from`/`created_until` (время физической загрузки) — объединяются через И.
 `src/service/selector.py::resolve_selector` резолвит CLI-имена в эти id (без побочных
 эффектов — неизвестное имя → `NotFound`, как у `ds get`), `count_matching` — точный
-предпоказ перед подтверждением. `ds delete`/`ds archive` в CLI (`src/cli/commands.py`)
-делятся всей этой машинерией и общим блоком флагов — отличается только терминальное
-действие (`storage.txn_delete` vs `storage.txn_archive`).
+предпоказ перед подтверждением. `ds delete`/`ds archive`/`ds unarchive` в CLI
+(`src/cli/commands.py`) делятся всей этой машинерией и общим блоком флагов — отличается
+только терминальное действие (`storage.txn_delete` vs `storage.txn_archive` vs
+`storage.txn_unarchive`).
 
 `--where LB=VALUE` резолвится через ту же свёртку Level 1, что и `ds get`
 (`service/get.py::fold_source`) — читает `--src`+`--lb` (та метка, что в условии),
@@ -47,7 +47,7 @@
 указанному `--src` (иначе `NotFound`), т.к. `cnt` — глобальный счётчик, не привязанный к
 источнику самой схемой.
 
-**`--src` обязателен и у `delete`, и у `archive` без исключений** — сознательное решение:
+**`--src` обязателен и у `delete`, `archive`, и `unarchive` без исключений** — сознательное решение:
 разрешить чисто временной отбор (`--dt-from`/`--created-until` и т.п.) без источника означало
 бы одной командой задеть всю БД разом. Это касается и раньше существовавшего глобального
 `txn_archive(until_dt)` — теперь тоже требует `--src` через CLI (сам порт этого не
@@ -68,11 +68,12 @@
 
 ## Вопросы к проработке
 
-- Нужна ли операция `restore` (обратный перенос из архива) и `purge` осиротевших записей
-  пулов — пересекается с [`optimization.md`](optimization.md).
+- `purge` осиротевших записей пулов (`srcs`/`lbs`/`ids`/`vals`, на которые больше не ссылается
+  ни одна транзакция ни в одной таблице) — пересекается с [`optimization.md`](optimization.md).
 - Правило **автоматического** архивирования (по давности? по правилу «не используется в
   последних N выгрузках»?) — ещё не сформулировано, следующий приоритет пользователя. Должно
-  лечь на тот же селектор, что уже есть у `delete`/`archive`/`compact`, а не завести свой.
+  лечь на тот же селектор, что уже есть у `delete`/`archive`/`unarchive`/`compact`, а не завести
+  свой.
 
 ## Обоснование
 

@@ -348,6 +348,28 @@ def test_txn_archive_moves_records(db):
     assert len(with_archive) == 2
 
 
+def test_txn_unarchive_moves_records_back(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    _insert(db, src, lb, id_, val, act, dt=_TS + 100)
+
+    db.txn_archive(until_dt=_TS + 50)
+    back_result = db.txn_unarchive(until_dt=_TS + 50)
+    assert isinstance(back_result, Ok)
+    assert back_result.value == 1
+
+    active = db.txn_query().value
+    assert len(active) == 2
+
+    with_archive = db.txn_query(include_archive=True).value
+    assert len(with_archive) == 2
+
+
 def test_txn_delete_by_src(db):
     src = _src(db)
     lb = db.lb_intern("x", src).value

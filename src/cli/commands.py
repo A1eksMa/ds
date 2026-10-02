@@ -246,6 +246,10 @@ def _archive(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
     return _lifecycle_op(storage, args, "archived", "Archive", storage.txn_archive)
 
 
+def _unarchive(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
+    return _lifecycle_op(storage, args, "unarchived", "Unarchive", storage.txn_unarchive)
+
+
 # --- compact: find transactions that repeat the value already in effect, soft/hard-remove them ---
 
 def _label_name(storage: SQLiteAdapter, lb_id) -> str:
@@ -397,6 +401,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_lifecycle_args(archive_p)
 
+    unarchive_p = sub.add_parser(
+        "unarchive", help="move matching archived transactions back into transactions"
+    )
+    _add_lifecycle_args(unarchive_p)
+
     compact_p = sub.add_parser(
         "compact",
         help="find transactions that repeat the value already in effect (no-op history) and archive/delete them",
@@ -429,6 +438,8 @@ def main(argv: list[str] | None = None) -> int:
         return _delete(storage, args)
     if args.command == "archive":
         return _archive(storage, args)
+    if args.command == "unarchive":
+        return _unarchive(storage, args)
     if args.command == "compact":
         return _compact(storage, args)
     return 0

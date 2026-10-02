@@ -3,7 +3,7 @@
 Точка входа — `src/cli/commands.py :: main` (`pyproject.toml` → `[project.scripts] ds`).
 Реализована на `argparse`, только stdlib.
 
-Подкоманды: `load`, `upload`, `update`, `get`, `delete`, `archive`, `compact`.
+Подкоманды: `load`, `upload`, `update`, `get`, `delete`, `archive`, `unarchive`, `compact`.
 
 ## Общий вид
 
@@ -14,7 +14,7 @@ ds [--db PATH] <command> ...
 | Аргумент | Обязателен | Значение |
 |---|---|---|
 | `--db PATH` | нет | путь к файлу SQLite. По умолчанию `data.db` в текущей директории. Создаётся автоматически со схемой, если файла нет. |
-| `<command>` | да | `load`, `upload`, `update`, `get`, `delete`, `archive` или `compact` |
+| `<command>` | да | `load`, `upload`, `update`, `get`, `delete`, `archive`, `unarchive` или `compact` |
 
 ## `ds load`
 
@@ -181,9 +181,9 @@ ds --db data.db get --out data/ --preset base.json  # по файлу на ис�
 **Манифест `ds get` не пишет.** Индекс над набором файлов + `.js`-обёртка под `file://` —
 задача поллера/потребителя, не ядра (см. [get-output-format.md](get-output-format.md#чего-get-не-делает)).
 
-## `ds delete` / `ds archive`
+## `ds delete` / `ds archive` / `ds unarchive`
 
-Две стороны одной операции — **что затронуть** задаётся абсолютно одинаковым набором флагов
+Три стороны одной операции — **что затронуть** задаётся абсолютно одинаковым набором флагов
 (общий резолв — `src/service/selector.py`), различается только конечное действие:
 
 - **`ds delete`** — физически удаляет транзакции — **навсегда**, из обеих таблиц
@@ -193,10 +193,14 @@ ds --db data.db get --out data/ --preset base.json  # по файлу на ис�
 - **`ds archive`** — переносит подходящие **активные** транзакции в `transactions_archive`
   (`StoragePort.txn_archive`) — обратимо в том смысле, что данные никуда не пропадают, только
   перестают попадать в `ds get` по умолчанию (нужен `--archive`).
+- **`ds unarchive`** — зеркало `ds archive` (`StoragePort.txn_unarchive`): переносит подходящие
+  **архивные** транзакции обратно в `transactions`. `cnt` при этом не меняется — это то же
+  перемещение записи, что и `archive`, только в обратную сторону, а не новая запись в журнале.
 
 ```
-ds [--db PATH] delete  --src NAME [СЕЛЕКТОР] [--yes]
-ds [--db PATH] archive --src NAME [СЕЛЕКТОР] [--yes]
+ds [--db PATH] delete    --src NAME [СЕЛЕКТОР] [--yes]
+ds [--db PATH] archive   --src NAME [СЕЛЕКТОР] [--yes]
+ds [--db PATH] unarchive --src NAME [СЕЛЕКТОР] [--yes]
 ```
 
 ### Селектор — что затронуть
@@ -221,7 +225,8 @@ transaction(s) for <описание отбора> (active + archived)? [y/N]`; 
 
 ### Вывод
 
-- Успех: `deleted <N> transaction(s)` / `archived <N> transaction(s)` в stdout, код `0`.
+- Успех: `deleted <N> transaction(s)` / `archived <N> transaction(s)` / `unarchived <N>
+  transaction(s)` в stdout, код `0`.
 - Отказ от подтверждения: `aborted` в stderr, код `1`.
 - Ошибка (неизвестные `--src`/`--lb`/`--id`/`--where`/`--cnt`, несовместимые флаги,
   хранилище): `error: <текст>` в stderr, код `1`.
@@ -238,13 +243,18 @@ ds --db data.db archive --src CRM --where is_test_account=true --yes
 
 # всё, что загружено в БД раньше определённого дня (не путать с --dt-until -- это про created_at)
 ds --db data.db archive --src CRM --created-until 1704067200 --yes
+
+# тот же --where возвращает те же ключи обратно из архива
+ds --db data.db unarchive --src CRM --where is_test_account=true --yes
+# unarchived 6 transaction(s)
 ```
 
 Метаданные показателя (запись в пуле `lbs`) при удалении не удаляются — только его транзакции;
 показатель просто перестаёт встречаться в данных `ds get`. Чистка осиротевших записей пулов —
 отдельная задача, см. [`../roadmap/optimization.md`](../roadmap/optimization.md). Полный
 разбор — [`../../examples/05-delete-label/`](../../examples/05-delete-label/),
-[`../../examples/07-archive-where/`](../../examples/07-archive-where/).
+[`../../examples/07-archive-where/`](../../examples/07-archive-where/),
+[`../../examples/11-unarchive-where/`](../../examples/11-unarchive-where/).
 
 ## `ds compact`
 

@@ -315,6 +315,25 @@ class InMemoryAdapter:
         self._transactions = [r for r in self._transactions if not matches(r)]
         return Ok(len(to_move))
 
+    def txn_unarchive(
+        self,
+        src_id: Optional[SrcId] = None,
+        lb_ids: Optional[List[LbId]] = None,
+        id_ids: Optional[List[IdId]] = None,
+        cnts: Optional[List[CntId]] = None,
+        from_dt: Optional[float] = None,
+        until_dt: Optional[float] = None,
+        created_from: Optional[float] = None,
+        created_until: Optional[float] = None,
+    ) -> Union[Ok[int], Err[StorageError]]:
+        matches = _row_matcher(
+            src_id, lb_ids, id_ids, cnts, from_dt, until_dt, created_from, created_until,
+        )
+        to_move = [r for r in self._archive if matches(r)]
+        self._transactions.extend(to_move)
+        self._archive = [r for r in self._archive if not matches(r)]
+        return Ok(len(to_move))
+
     def txn_delete(
         self,
         src_id: Optional[SrcId] = None,

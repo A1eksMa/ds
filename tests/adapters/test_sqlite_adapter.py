@@ -286,6 +286,43 @@ def test_txn_archive_preserves_created_at(db):
     assert archived.created_at == inserted.created_at
 
 
+def test_txn_unarchive_is_atomic(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    _insert(db, src, lb, id_, val, act, dt=_TS + 200)
+
+    db.txn_archive(until_dt=_TS + 100)
+    back = db.txn_unarchive(until_dt=_TS + 100)
+    assert isinstance(back, Ok)
+    assert back.value == 1
+
+    active = db.txn_query().value
+    assert len(active) == 2
+
+    full = db.txn_query(include_archive=True).value
+    assert len(full) == 2
+
+
+def test_txn_unarchive_preserves_created_at(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+
+    inserted = _insert(db, src, lb, id_, val, act, dt=_TS).value
+    db.txn_archive(until_dt=_TS + 1)
+    db.txn_unarchive(until_dt=_TS + 1)
+
+    restored = db.txn_query().value[0]
+    assert restored.created_at == inserted.created_at
+
+
 def test_txn_delete_removes_from_both_tables(db):
     src = _src(db)
     lb = db.lb_intern("x", src).value

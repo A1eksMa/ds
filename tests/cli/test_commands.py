@@ -550,6 +550,63 @@ def test_archive_command_without_yes_respects_declined_prompt(db_path, source_di
     assert "aborted" in capsys.readouterr().err
 
 
+# --- unarchive command ---
+
+def test_unarchive_command_moves_back(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    main(["--db", db_path, "archive", "--src", "CRM", "--lb", "phone", "--yes"])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "unarchive", "--src", "CRM", "--lb", "phone", "--yes"])
+    assert rc == 0
+    assert "unarchived 2 transaction(s)" in capsys.readouterr().out
+
+    rc = main(["--db", db_path, "get", "--src", "CRM", "--lb", "phone"])
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["data"] != []  # back in the active fold
+
+
+def test_unarchive_command_unknown_source(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    rc = main(["--db", db_path, "unarchive", "--src", "ERP", "--yes"])
+    assert rc == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_unarchive_command_by_where(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    main(["--db", db_path, "archive", "--src", "CRM", "--where", "email=b.new@e.com", "--yes"])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "unarchive", "--src", "CRM", "--where", "email=b.new@e.com", "--yes"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "get", "--src", "CRM"])
+    doc = json.loads(capsys.readouterr().out)
+    assert {r["customer_id"] for r in doc["data"]} == {"101", "102"}  # 102 back in the active fold
+
+
+def test_unarchive_command_zero_matches_reports_zero_without_prompting(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "unarchive", "--src", "CRM", "--created-until", "0"])
+    assert rc == 0
+    assert "unarchived 0 transaction(s)" in capsys.readouterr().out
+
+
+def test_unarchive_command_without_yes_respects_declined_prompt(db_path, source_dir, tmp_path, capsys, monkeypatch):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    main(["--db", db_path, "archive", "--src", "CRM", "--lb", "phone", "--yes"])
+    capsys.readouterr()
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    rc = main(["--db", db_path, "unarchive", "--src", "CRM", "--lb", "phone"])
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err
+
+
 # --- compact command ---
 
 def _seed_with_duplicate(db_path, source_dir, tmp_path):
