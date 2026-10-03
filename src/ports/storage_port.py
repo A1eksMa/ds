@@ -29,6 +29,13 @@ class StoragePort(Protocol):
 
     def id_get(self, id_id: IdId) -> Union[Ok[str], Err[StorageError]]: ...
 
+    # Batched id_get: one round trip (chunked) instead of one per id_id --
+    # what `ds get` uses to resolve a whole source's rows (see
+    # src/service/get.py::_build_source). A ValId/IdId absent from the DB is
+    # simply absent from the returned mapping (same "missing -> absent"
+    # convention as txn_last_values), not an error.
+    def id_get_many(self, id_ids: List[IdId]) -> Union[Ok[Dict[int, str]], Err[StorageError]]: ...
+
     # Reverse lookup, side-effect free (unlike id_intern -- doesn't create a
     # pool entry for an unknown value). None = the value was never interned.
     def id_lookup(self, value: str) -> Union[Ok[Optional[IdId]], Err[StorageError]]: ...
@@ -37,9 +44,16 @@ class StoragePort(Protocol):
 
     def val_get(self, val_id: ValId) -> Union[Ok[str], Err[StorageError]]: ...
 
+    # Batched val_get -- see id_get_many.
+    def val_get_many(self, val_ids: List[ValId]) -> Union[Ok[Dict[int, str]], Err[StorageError]]: ...
+
     def act_intern(self, act: Act) -> Union[Ok[ActId], Err[StorageError]]: ...
 
     # --- Source metadata ---
+    # Every Src carries struct_version, an opaque-to-callers counter bumped by
+    # txn_delete/txn_archive/txn_unarchive/lb_merge (never by txn_insert) --
+    # how `ds get --cache` tells "pure appends since last time" from
+    # "something structural happened" (see docs/decisions/0010-incremental-fold-cache.md).
 
     def src_get_or_create(
         self, name: str

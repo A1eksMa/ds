@@ -1,0 +1,85 @@
+loaded 2 transaction(s)
+--- ds get --dt 1704067200 --cache get-cache.json (первый вызов: кэша ещё нет -- полная пересборка, кэш создаётся) ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1704067200.0,
+    "generated_at": 0,
+    "gen_max_cnt": 2,
+    "include_archive": false,
+    "rows": 2,
+    "labels": [
+      "email"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@e.com"
+    },
+    {
+      "customer_id": "102",
+      "email": "bob@e.com"
+    }
+  ]
+}
+loaded 2 transaction(s)
+--- ds get --dt 1706745600 --cache get-cache.json (второй вызов: источник не менялся структурно -- досчитываются только новые транзакции) ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1706745600.0,
+    "generated_at": 0,
+    "gen_max_cnt": 4,
+    "include_archive": false,
+    "rows": 3,
+    "labels": [
+      "email"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@e.com"
+    },
+    {
+      "customer_id": "102",
+      "email": "bob.new@e.com"
+    },
+    {
+      "customer_id": "103",
+      "email": "carol@e.com"
+    }
+  ]
+}
+--- ds get --dt 1706745600 (без --cache, для сравнения -- результат тот же) ---
+{
+  "meta": {
+    "name": "CRM",
+    "key": "customer_id",
+    "as_of": 1706745600.0,
+    "generated_at": 0,
+    "gen_max_cnt": 4,
+    "include_archive": false,
+    "rows": 3,
+    "labels": [
+      "email"
+    ]
+  },
+  "data": [
+    {
+      "customer_id": "101",
+      "email": "alice@e.com"
+    },
+    {
+      "customer_id": "102",
+      "email": "bob.new@e.com"
+    },
+    {
+      "customer_id": "103",
+      "email": "carol@e.com"
+    }
+  ]
+}

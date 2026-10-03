@@ -57,6 +57,39 @@ def test_val_intern_no_cache_same_id(db):
     assert v1 == v2
 
 
+def test_id_get_many_batches_lookups(db):
+    a = db.id_intern("a").value
+    b = db.id_intern("b").value
+    db.id_intern("c").value  # not requested below -- must not leak into the result
+
+    result = db.id_get_many([a, b])
+    assert isinstance(result, Ok)
+    assert result.value == {int(a): "a", int(b): "b"}
+
+
+def test_id_get_many_omits_unknown_ids(db):
+    a = db.id_intern("a").value
+    result = db.id_get_many([a, 9999])
+    assert result.value == {int(a): "a"}
+
+
+def test_id_get_many_empty_input(db):
+    assert db.id_get_many([]).value == {}
+
+
+def test_val_get_many_batches_lookups(db):
+    a = db.val_intern("hello").value
+    b = db.val_intern("world").value
+    result = db.val_get_many([a, b])
+    assert result.value == {int(a): "hello", int(b): "world"}
+
+
+def test_val_get_many_omits_unknown_ids(db):
+    a = db.val_intern("hello").value
+    result = db.val_get_many([a, 9999])
+    assert result.value == {int(a): "hello"}
+
+
 def test_act_intern_all_variants(db):
     for act in Act:
         result = db.act_intern(act)
@@ -394,6 +427,94 @@ def test_txn_delete_removes_from_both_tables(db):
     assert isinstance(result, Ok)
     assert result.value == 2
     assert db.txn_query(include_archive=True).value == []
+
+
+# --- struct_version (ds get --cache invalidation signal) ---
+
+def test_struct_version_starts_at_zero(db):
+    src = _src(db)
+    assert db.src_get(src).value.struct_version == 0
+
+
+def test_txn_insert_does_not_bump_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    assert db.src_get(src).value.struct_version == 0
+
+
+def test_txn_archive_bumps_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_archive(src_id=src)
+    assert db.src_get(src).value.struct_version == 1
+
+
+def test_txn_unarchive_bumps_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_archive(src_id=src)
+    db.txn_unarchive(src_id=src)
+    assert db.src_get(src).value.struct_version == 2
+
+
+def test_txn_delete_bumps_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_delete(src_id=src)
+    assert db.src_get(src).value.struct_version == 1
+
+
+def test_lifecycle_op_matching_nothing_does_not_bump_struct_version(db):
+    src = _src(db)
+    db.txn_archive(src_id=src)  # no transactions at all -- matches nothing
+    assert db.src_get(src).value.struct_version == 0
+
+
+def test_lb_merge_bumps_struct_version_on_both_sources(db):
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    old_lb = db.lb_intern("old", src_a).value
+    new_lb = db.lb_intern("new", src_b).value
+
+    db.lb_merge(old_lb, new_lb)
+
+    assert db.src_get(src_a).value.struct_version == 1
+    assert db.src_get(src_b).value.struct_version == 1
+
+
+def test_txn_delete_bumps_struct_version_for_every_touched_source(db):
+    # cnts= filter with no src_id -- compact's own call shape (see _compact in
+    # cli/commands.py) -- must still find every distinct source among the matches
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    lb_a = db.lb_intern("x", src_a).value
+    lb_b = db.lb_intern("x", src_b).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    t_a = _insert(db, src_a, lb_a, id_, val, act, dt=_TS).value
+    t_b = _insert(db, src_b, lb_b, id_, val, act, dt=_TS).value
+
+    db.txn_delete(cnts=[t_a.cnt, t_b.cnt])
+
+    assert db.src_get(src_a).value.struct_version == 1
+    assert db.src_get(src_b).value.struct_version == 1
 
 
 # --- txn_last_values ---

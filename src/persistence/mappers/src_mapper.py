@@ -17,6 +17,7 @@ def record_to_domain(record: SrcRecord) -> Union[Ok[Src], Err[ValidationError]]:
         p=record.p,
         key_label=LbId(record.key_label) if record.key_label is not None else None,
         description=record.description,
+        struct_version=record.struct_version,
     ))
 
 
@@ -27,4 +28,5 @@ def domain_to_record(src: Src) -> SrcRecord:
         p=src.p,
         key_label=int(src.key_label) if src.key_label is not None else None,
         description=src.description,
+        struct_version=src.struct_version,
     )

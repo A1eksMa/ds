@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-from src.domain.entities import IdId, LbId, SrcId, Transaction, ValId
+from src.domain.entities import CntId, IdId, LbId, SrcId, Transaction, ValId
 from src.domain.errors import NotFound, StorageError, ValidationError
 from src.domain.result import Err, Ok
 from src.ports.storage_port import StoragePort
@@ -132,35 +132,152 @@ def merge_overrides(
 
 # --- Level 1 fold ------------------------------------------------------------
 
+# (lb_id, id_id) -> (dt, cnt, val_id) of the winning transaction. val_id 0 means
+# the winning op was a DELETE. Keeping (dt, cnt) alongside val_id (rather than
+# collapsing straight to val_id, as the public {meta, data} payload does) is
+# what makes this shape reusable as a merge seed -- see SourceCacheEntry below.
+_Winners = Dict[Tuple[int, int], Tuple[float, int, int]]
 
-def fold_source(txns: List[Transaction]) -> Dict[tuple, int]:
+
+def fold_source(txns: List[Transaction], seed: Optional[_Winners] = None) -> _Winners:
     """Collapse a source's transaction list to one winner per (lb_id, id_id).
 
     Level 1 rule (see docs/decisions/0006-fold-order-dt-cnt.md): the transaction
-    with the greatest (dt, cnt) wins. Returns {(lb_id, id_id): val_id}; val_id 0
-    means the winning op was a DELETE.
+    with the greatest (dt, cnt) wins. Returns {(lb_id, id_id): (dt, cnt, val_id)}.
+
+    `seed` -- an existing winners mapping (e.g. from a fold cache) to merge
+    `txns` into instead of folding from scratch. The merge is order-independent:
+    each candidate is compared only against the current winner for its key, so
+    callers may pass `txns` in any order, including out-of-order business time
+    (backdated corrections) -- see docs/decisions/0010-incremental-fold-cache.md.
     """
-    winners: Dict[tuple, Transaction] = {}
+    winners: _Winners = dict(seed) if seed else {}
     for t in txns:
         key = (int(t.lb), int(t.id))
+        cand = (t.dt, int(t.cnt), int(t.val))
         cur = winners.get(key)
-        if cur is None or (t.dt, int(t.cnt)) > (cur.dt, int(cur.cnt)):
-            winners[key] = t
-    return {key: int(t.val) for key, t in winners.items()}
+        if cur is None or (cand[0], cand[1]) > (cur[0], cur[1]):
+            winners[key] = cand
+    return winners
+
+
+@dataclass(frozen=True)
+class SourceCacheEntry:
+    """Incremental-fold cache for one source, written and consumed only by
+    `ds get --cache` -- opaque to every other caller. Deliberately NOT the
+    public `{meta, data}` payload: that format collapses each cell down to its
+    resolved value and drops the (dt, cnt) it won on, which is exactly the
+    information `fold_source`'s merge needs. See
+    docs/decisions/0010-incremental-fold-cache.md.
+
+    `struct_version`/`labels`/`include_archive` pin the exact query shape this
+    cache is valid for; `as_of` is the previous effective_dt (the lower bound
+    for the "did anything newly fall into dt range" catch-up query -- see
+    `_build_source`); `max_cnt` is the watermark for the "what's new" query.
+    """
+    struct_version: int
+    max_cnt: int
+    as_of: float
+    include_archive: bool
+    labels: Tuple[str, ...]
+    winners: _Winners
+
+
+def _cache_usable(
+    entry: Optional[SourceCacheEntry],
+    struct_version: int,
+    labels: Tuple[str, ...],
+    include_archive: bool,
+    effective_dt: float,
+) -> bool:
+    return (
+        entry is not None
+        and entry.struct_version == struct_version
+        and entry.include_archive == include_archive
+        and entry.labels == labels
+        and effective_dt >= entry.as_of
+    )
+
+
+def cache_entry_to_json(entry: SourceCacheEntry) -> dict:
+    return {
+        "struct_version": entry.struct_version,
+        "max_cnt": entry.max_cnt,
+        "as_of": entry.as_of,
+        "include_archive": entry.include_archive,
+        "labels": list(entry.labels),
+        "winners": [
+            [lb, id_, dt, cnt, val]
+            for (lb, id_), (dt, cnt, val) in sorted(entry.winners.items())
+        ],
+    }
+
+
+def cache_entry_from_json(obj: object) -> Optional[SourceCacheEntry]:
+    """Tolerant parse: any shape mismatch -> None, i.e. "no usable cache for
+    this source" -- callers fall back to a full rebuild, never a hard error.
+    Covers a hand-edited/corrupt file and a cache from a future `ds` version
+    with a different cache shape alike."""
+    if not isinstance(obj, dict):
+        return None
+    try:
+        winners = {
+            (int(lb), int(id_)): (float(dt), int(cnt), int(val))
+            for lb, id_, dt, cnt, val in obj["winners"]
+        }
+        return SourceCacheEntry(
+            struct_version=int(obj["struct_version"]),
+            max_cnt=int(obj["max_cnt"]),
+            as_of=float(obj["as_of"]),
+            include_archive=bool(obj["include_archive"]),
+            labels=tuple(str(x) for x in obj["labels"]),
+            winners=winners,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def load_cache(path: Path) -> Dict[str, SourceCacheEntry]:
+    """Read a `ds get --cache` file. Missing/corrupt/unreadable -> {} (treated
+    exactly like "no cache yet" -- every source falls back to a full rebuild)."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, SourceCacheEntry] = {}
+    for name, obj in raw.items():
+        entry = cache_entry_from_json(obj)
+        if entry is not None:
+            out[name] = entry
+    return out
+
+
+def save_cache(path: Path, cache: Dict[str, SourceCacheEntry]) -> None:
+    doc = {name: cache_entry_to_json(entry) for name, entry in cache.items()}
+    text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
 
 
 # --- per-source export ------------------------------------------------------
 
 
-def build_source(
+def _build_source(
     storage: StoragePort,
     src,
     label_names: Optional[List[str]],
     effective_dt: float,
     include_archive: bool,
     now: float,
-) -> Union[Ok[dict], _Err]:
-    """Build the {meta, data} payload for one source.
+    cache_entry: Optional[SourceCacheEntry],
+) -> Union[Ok[Tuple[dict, SourceCacheEntry]], _Err]:
+    """Build the {meta, data} payload for one source, optionally seeded from a
+    prior fold (`cache_entry`). Returns (payload, updated_cache_entry) -- the
+    latter is always produced, even when no cache was passed in or usable, so
+    callers can persist it for next time regardless of which path ran.
 
     `data` is a wide table: one object per id, keyed by the source's key label
     plus the selected labels. A label value of None means the last op was a
@@ -187,46 +304,85 @@ def build_source(
             selected[n] = name_to_lbid[n]
     lbid_to_name = {i: n for n, i in selected.items()}
     selected_lbids = set(selected.values())
+    labels_key = tuple(sorted(selected.keys()))
+    struct_version = int(getattr(src, "struct_version", 0))
 
-    txns_r = storage.txn_query(
-        src_id=SrcId(src.src_id),
-        until_dt=effective_dt,
-        include_archive=include_archive,
-    )
-    if isinstance(txns_r, Err):
-        return txns_r
-    txns = txns_r.value
-    gen_max_cnt = max((int(t.cnt) for t in txns), default=0)
+    usable = _cache_usable(cache_entry, struct_version, labels_key, include_archive, effective_dt)
+    if usable:
+        lb_filter = [LbId(i) for i in selected_lbids] if selected_lbids else None
+        # Two catch-up queries, merged together (fold_source's merge is
+        # order-independent, so overlap between them is harmless):
+        #  (a) truly new transactions -- cnt advanced since the cache was taken;
+        #  (b) transactions that already existed back then but were excluded
+        #      from that fold purely because their business time (dt) was
+        #      still beyond the old as_of -- e.g. a future-dated scheduled
+        #      change. Their cnt can be *lower* than the cache's watermark
+        #      (interleaved with other, already-folded rows in the same
+        #      batch), so (a) alone would permanently miss them once their dt
+        #      finally comes into range. See docs/decisions/0010-incremental-fold-cache.md.
+        new_r = storage.txn_query(
+            src_id=SrcId(src.src_id), lb_ids=lb_filter,
+            from_cnt=CntId(cache_entry.max_cnt), until_dt=effective_dt,
+            include_archive=include_archive,
+        )
+        if isinstance(new_r, Err):
+            return new_r
+        pending_r = storage.txn_query(
+            src_id=SrcId(src.src_id), lb_ids=lb_filter,
+            from_dt=cache_entry.as_of, until_dt=effective_dt,
+            include_archive=include_archive,
+        )
+        if isinstance(pending_r, Err):
+            return pending_r
+        delta = new_r.value + pending_r.value
+        folded = fold_source(delta, seed=cache_entry.winners)
+        gen_max_cnt = max([cache_entry.max_cnt] + [int(t.cnt) for t in delta])
+    else:
+        txns_r = storage.txn_query(
+            src_id=SrcId(src.src_id),
+            until_dt=effective_dt,
+            include_archive=include_archive,
+        )
+        if isinstance(txns_r, Err):
+            return txns_r
+        txns = txns_r.value
+        gen_max_cnt = max((int(t.cnt) for t in txns), default=0)
+        folded = fold_source([t for t in txns if int(t.lb) in selected_lbids])
 
-    folded = fold_source([t for t in txns if int(t.lb) in selected_lbids])
+    # Batched instead of one id_get/val_get per cell: at publish scale the
+    # winners dict (and hence this resolution step) is O(every current row in
+    # the source), independent of whether the fold itself took the cached
+    # fast path above -- one id_get/val_get round trip per row dominated a
+    # 60k-row benchmark even with the fold fully cached (see
+    # docs/decisions/0010-incremental-fold-cache.md).
+    val_ids_needed = {val_id for (_lb, _id), (_dt, _cnt, val_id) in folded.items() if val_id != 0}
+    val_cache_r = storage.val_get_many([ValId(v) for v in val_ids_needed])
+    if isinstance(val_cache_r, Err):
+        return val_cache_r
+    val_cache = val_cache_r.value
 
-    val_cache: Dict[int, str] = {}
     rows_by_id: Dict[int, Dict[str, Optional[str]]] = {}
-    for (lb_id, id_id), val_id in folded.items():
+    for (lb_id, id_id), (_dt, _cnt, val_id) in folded.items():
         row = rows_by_id.setdefault(id_id, {})
-        if val_id == 0:
-            row[lbid_to_name[lb_id]] = None
-            continue
-        if val_id not in val_cache:
-            vr = storage.val_get(ValId(val_id))
-            if isinstance(vr, Err):
-                return vr
-            val_cache[val_id] = vr.value
-        row[lbid_to_name[lb_id]] = val_cache[val_id]
+        row[lbid_to_name[lb_id]] = None if val_id == 0 else val_cache.get(val_id)
 
     key_col = key_name or "id"
+    id_names_r = storage.id_get_many([IdId(i) for i in rows_by_id])
+    if isinstance(id_names_r, Err):
+        return id_names_r
+    id_names = id_names_r.value
+
+    label_order = sorted(selected.keys())  # precomputed once, not per row
     data: List[dict] = []
     for id_id, cols in rows_by_id.items():
-        ir = storage.id_get(IdId(id_id))
-        if isinstance(ir, Err):
-            return ir
-        ordered: Dict[str, Optional[str]] = {key_col: ir.value}
-        for name in sorted(cols):
-            ordered[name] = cols[name]
+        ordered: Dict[str, Optional[str]] = {key_col: id_names.get(id_id)}
+        for name in label_order:
+            if name in cols:
+                ordered[name] = cols[name]
         data.append(ordered)
     data.sort(key=lambda r: r[key_col])
 
-    return Ok({
+    payload = {
         "meta": {
             "name": src.name,
             "key": key_name,
@@ -238,7 +394,37 @@ def build_source(
             "labels": sorted(selected.keys()),
         },
         "data": data,
-    })
+    }
+    new_entry = SourceCacheEntry(
+        struct_version=struct_version,
+        max_cnt=gen_max_cnt,
+        as_of=effective_dt,
+        include_archive=include_archive,
+        labels=labels_key,
+        winners=folded,
+    )
+    return Ok((payload, new_entry))
+
+
+def build_source(
+    storage: StoragePort,
+    src,
+    label_names: Optional[List[str]],
+    effective_dt: float,
+    include_archive: bool,
+    now: float,
+) -> Union[Ok[dict], _Err]:
+    """Build the {meta, data} payload for one source -- always a full fold,
+    no cache. See `_build_source` for the cache-seeded variant used by
+    `run_get_cached`."""
+    result = _build_source(
+        storage, src, label_names, effective_dt, include_archive, now,
+        cache_entry=None,
+    )
+    if isinstance(result, Err):
+        return result
+    payload, _entry = result.value
+    return Ok(payload)
 
 
 def run_get(
@@ -268,3 +454,44 @@ def run_get(
             return result
         out[name] = result.value
     return Ok(out)
+
+
+def run_get_cached(
+    storage: StoragePort,
+    params: GetParams,
+    now: float,
+    cache: Dict[str, SourceCacheEntry],
+) -> Union[Ok[Tuple[Dict[str, dict], Dict[str, SourceCacheEntry]]], _Err]:
+    """Like `run_get`, but seeds/updates an incremental fold cache per source.
+
+    `cache` -- {source_name: SourceCacheEntry}, typically round-tripped from
+    `ds get --cache`'s JSON file via `load_cache`; pass {} on the first call
+    for a given cache file. Returns (payloads, updated_cache) with one cache
+    entry per processed source, whether or not its cached entry was usable --
+    always safe to persist via `save_cache`.
+    """
+    srcs_r = storage.src_list()
+    if isinstance(srcs_r, Err):
+        return srcs_r
+    by_name = {s.name: s for s in srcs_r.value}
+
+    names = params.sources if params.sources is not None else [s.name for s in srcs_r.value]
+    effective_dt = params.dt if params.dt is not None else now
+
+    out: Dict[str, dict] = {}
+    new_cache: Dict[str, SourceCacheEntry] = {}
+    for name in names:
+        if name not in by_name:
+            return Err(NotFound(entity="Source", key=name))
+        label_names = params.labels_by_source.get(name, params.labels)
+        result = _build_source(
+            storage, by_name[name], label_names,
+            effective_dt, params.include_archive, now,
+            cache_entry=cache.get(name),
+        )
+        if isinstance(result, Err):
+            return result
+        payload, entry = result.value
+        out[name] = payload
+        new_cache[name] = entry
+    return Ok((out, new_cache))

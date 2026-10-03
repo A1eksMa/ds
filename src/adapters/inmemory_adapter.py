@@ -129,6 +129,10 @@ class InMemoryAdapter:
             return Err(StorageError(f"id {id_id} not found"))
         return Ok(value)
 
+    def id_get_many(self, id_ids: List[IdId]) -> Union[Ok[Dict[int, str]], Err[StorageError]]:
+        wanted = {int(x) for x in id_ids}
+        return Ok({k: v for k, v in self._ids.items() if k in wanted})
+
     def id_lookup(self, value: str) -> Union[Ok[Optional[IdId]], Err[StorageError]]:
         id_id = self._id_values.get(value)
         return Ok(IdId(id_id) if id_id is not None else None)
@@ -145,6 +149,10 @@ class InMemoryAdapter:
         if value is None:
             return Err(StorageError(f"val {val_id} not found"))
         return Ok(value)
+
+    def val_get_many(self, val_ids: List[ValId]) -> Union[Ok[Dict[int, str]], Err[StorageError]]:
+        wanted = {int(x) for x in val_ids}
+        return Ok({k: v for k, v in self._vals.items() if k in wanted})
 
     def act_intern(self, act: Act) -> Union[Ok[ActId], Err[StorageError]]:
         name = act.value
@@ -164,7 +172,7 @@ class InMemoryAdapter:
             self._src_names[name] = src_id
             self._srcs[src_id] = {
                 "src_id": src_id, "name": name, "p": 0.5,
-                "key_label": None, "description": None,
+                "key_label": None, "description": None, "struct_version": 0,
             }
         return self.src_get(SrcId(self._src_names[name]))
 
@@ -179,6 +187,7 @@ class InMemoryAdapter:
             p=data["p"],
             key_label=LbId(key_label) if key_label is not None else None,
             description=data["description"],
+            struct_version=data.get("struct_version", 0),
         ))
 
     def src_update(self, src: Src) -> Union[Ok[None], Err[StorageError]]:
@@ -208,6 +217,7 @@ class InMemoryAdapter:
                 p=data["p"],
                 key_label=LbId(key_label) if key_label is not None else None,
                 description=data["description"],
+                struct_version=data.get("struct_version", 0),
             ))
         return Ok(result)
 
@@ -245,10 +255,17 @@ class InMemoryAdapter:
             ))
         return Ok(result)
 
+    def _bump_struct_versions(self, src_ids) -> None:
+        for s in {int(x) for x in src_ids}:
+            data = self._srcs.get(s)
+            if data is not None:
+                data["struct_version"] = data.get("struct_version", 0) + 1
+
     def lb_merge(
         self, from_lb_id: LbId, into_lb_id: LbId,
     ) -> Union[Ok[int], Err[StorageError]]:
         into_src_id = self._lbs[int(into_lb_id)]["src"]
+        from_src_id = self._lbs[int(from_lb_id)]["src"]
         moved = 0
         for pool in (self._transactions, self._archive):
             for row in pool:
@@ -259,6 +276,7 @@ class InMemoryAdapter:
         old = self._lbs.pop(int(from_lb_id), None)
         if old is not None:
             self._lb_names.pop((old["src"], old["name"]), None)
+        self._bump_struct_versions({from_src_id, into_src_id})
         return Ok(moved)
 
     # --- Transactions ---
@@ -329,6 +347,7 @@ class InMemoryAdapter:
         to_move = [r for r in self._transactions if matches(r)]
         self._archive.extend(to_move)
         self._transactions = [r for r in self._transactions if not matches(r)]
+        self._bump_struct_versions({r["src"] for r in to_move})
         return Ok(len(to_move))
 
     def txn_unarchive(
@@ -348,6 +367,7 @@ class InMemoryAdapter:
         to_move = [r for r in self._archive if matches(r)]
         self._transactions.extend(to_move)
         self._archive = [r for r in self._archive if not matches(r)]
+        self._bump_struct_versions({r["src"] for r in to_move})
         return Ok(len(to_move))
 
     def txn_delete(
@@ -366,10 +386,13 @@ class InMemoryAdapter:
         )
         # both tables count toward the total: a hard delete must account for
         # rows in the archive too, not just the active list
+        touched = {r["src"] for r in self._transactions if matches(r)}
+        touched |= {r["src"] for r in self._archive if matches(r)}
         before = len(self._transactions) + len(self._archive)
         self._transactions = [r for r in self._transactions if not matches(r)]
         self._archive = [r for r in self._archive if not matches(r)]
         after = len(self._transactions) + len(self._archive)
+        self._bump_struct_versions(touched)
         return Ok(before - after)
 
     # --- Bulk history lookup ---

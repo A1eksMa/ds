@@ -346,6 +346,80 @@ def test_get_command_flag_overrides_preset_dt(db_path, source_dir, tmp_path, cap
     assert row102["email"] == "b.new@e.com"
 
 
+# --- get --cache (incremental fold cache) ---
+
+def _drop_generated_at(doc):
+    doc = dict(doc)
+    doc["meta"] = {k: v for k, v in doc["meta"].items() if k != "generated_at"}
+    return doc
+
+
+def test_get_command_cache_first_call_matches_no_cache(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    cache_path = tmp_path / "cache.json"
+    rc = main(["--db", db_path, "get", "--dt", "1700100000", "--cache", str(cache_path)])
+    assert rc == 0
+    cached_doc = json.loads(capsys.readouterr().out)
+
+    rc = main(["--db", db_path, "get", "--dt", "1700100000"])
+    assert rc == 0
+    plain_doc = json.loads(capsys.readouterr().out)
+
+    assert _drop_generated_at(cached_doc) == _drop_generated_at(plain_doc)
+    assert cache_path.exists()
+
+
+def test_get_command_cache_second_call_picks_up_new_load(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    cache_path = tmp_path / "cache.json"
+    main(["--db", db_path, "get", "--dt", "1700100000", "--cache", str(cache_path)])
+    capsys.readouterr()
+
+    d3 = tmp_path / "b3.json"
+    d3.write_text(json.dumps({"customer_id": ["103"], "email": ["c@e.com"]}), encoding="utf-8")
+    main(["--db", db_path, "load", "--dt", "1700200000", str(source_dir), str(d3)])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "get", "--dt", "1700200000", "--cache", str(cache_path)])
+    assert rc == 0
+    cached_doc = json.loads(capsys.readouterr().out)
+
+    rc = main(["--db", db_path, "get", "--dt", "1700200000"])
+    plain_doc = json.loads(capsys.readouterr().out)
+
+    assert _drop_generated_at(cached_doc) == _drop_generated_at(plain_doc)
+    assert {r["customer_id"] for r in cached_doc["data"]} == {"101", "102", "103"}
+
+
+def test_get_command_cache_stays_correct_after_archive(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    cache_path = tmp_path / "cache.json"
+    main(["--db", db_path, "get", "--dt", "1700100000", "--cache", str(cache_path)])
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "archive", "--src", "CRM", "--id", "101", "--yes"])
+    assert rc == 0
+    capsys.readouterr()
+
+    rc = main(["--db", db_path, "get", "--dt", "1700100000", "--cache", str(cache_path)])
+    assert rc == 0
+    cached_doc = json.loads(capsys.readouterr().out)
+
+    rc = main(["--db", db_path, "get", "--dt", "1700100000"])
+    plain_doc = json.loads(capsys.readouterr().out)
+
+    assert _drop_generated_at(cached_doc) == _drop_generated_at(plain_doc)
+    assert {r["customer_id"] for r in cached_doc["data"]} == {"102"}  # 101 archived out
+
+
+def test_get_command_cache_file_is_tolerant_of_garbage(db_path, source_dir, tmp_path, capsys):
+    _seed(db_path, source_dir, tmp_path, capsys)
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text("not json at all", encoding="utf-8")
+    rc = main(["--db", db_path, "get", "--dt", "1700100000", "--cache", str(cache_path)])
+    assert rc == 0  # falls back to a full rebuild rather than erroring
+
+
 # --- delete command ---
 
 def test_delete_command_unknown_source(db_path, source_dir, tmp_path, capsys):

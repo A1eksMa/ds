@@ -51,3 +51,4 @@ UPDATE_EXAMPLES=1 python -m pytest tests/examples/ -q   # перегенерир
 | [`11-unarchive-where`](11-unarchive-where/) | `ds unarchive` — зеркало `ds archive`: вернуть архивные транзакции обратно, тот же `--where` |
 | [`12-mv-rename`](12-mv-rename/) | `ds mv` — переименовать показатель, слить с переходным периодом (новое имя уже частично в ходу) |
 | [`13-mv-cross-source`](13-mv-cross-source/) | `ds mv --to-src` — перенести показатель в другой (уже существующий) источник |
+| [`14-get-cache`](14-get-cache/) | `ds get --cache` — инкрементальная свёртка, тот же результат что без кэша |

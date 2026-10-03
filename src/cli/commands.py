@@ -116,12 +116,21 @@ def _get(storage: SQLiteAdapter, args: argparse.Namespace) -> int:
         include_archive=args.archive,
     )
 
-    result = svc_get.run_get(storage, params, now=time.time())
-    if isinstance(result, Err):
-        print(f"error: {_err_msg(result.error)}", file=sys.stderr)
-        return 1
-
-    payloads = result.value  # {source_name: {meta, data}}
+    if args.cache:
+        cache_path = Path(args.cache)
+        cache = svc_get.load_cache(cache_path)
+        result = svc_get.run_get_cached(storage, params, now=time.time(), cache=cache)
+        if isinstance(result, Err):
+            print(f"error: {_err_msg(result.error)}", file=sys.stderr)
+            return 1
+        payloads, new_cache = result.value
+        svc_get.save_cache(cache_path, new_cache)
+    else:
+        result = svc_get.run_get(storage, params, now=time.time())
+        if isinstance(result, Err):
+            print(f"error: {_err_msg(result.error)}", file=sys.stderr)
+            return 1
+        payloads = result.value  # {source_name: {meta, data}}
 
     if args.out:
         out_dir = Path(args.out)
@@ -411,6 +420,12 @@ def main(argv: list[str] | None = None) -> int:
     get_p.add_argument("--dt", help="unix timestamp cutoff / as-of (default: current time)")
     get_p.add_argument("--preset", help="preset JSON file; its 'query' section supplies the parameters")
     get_p.add_argument("--archive", action="store_true", help="include archived transactions in the fold")
+    get_p.add_argument(
+        "--cache",
+        help="incremental fold cache file (read if present, always rewritten); "
+             "speeds up repeated `ds get` calls when the source(s) only grew by "
+             "plain loads since the last call -- see docs/reference/cli.md#ds-get",
+    )
 
     def _add_lifecycle_args(p: argparse.ArgumentParser) -> None:
         p.add_argument("--src", required=True, help="source name")

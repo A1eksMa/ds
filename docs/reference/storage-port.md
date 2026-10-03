@@ -25,9 +25,11 @@
 | `lb_intern(name, src_id)` | `LbId` — метка **в контексте источника** (`src_id` обязателен) |
 | `id_intern(value)` | `IdId` |
 | `id_get(id_id)` | `str` — обратный резолв |
+| `id_get_many(id_ids)` | `Dict[int, str]` — батч `id_get`: один запрос (чанками) вместо одного на `id_id`. Пропавший `id_id` просто отсутствует в результате, не ошибка. Так `ds get`/`_build_source` резолвит ключи всех строк среза за раз — на масштабе это доминировало над самой свёрткой, даже с `--cache` ([ADR-0010](../decisions/0010-incremental-fold-cache.md)) |
 | `id_lookup(value)` | `Optional[IdId]` — обратный резолв, **без побочных эффектов**: `None`, если значение никогда не интернировалось (в отличие от `id_intern`, ничего не создаёт). Резолв `--id VALUE` у `ds delete`/`ds archive` |
 | `val_intern(value)` | `ValId` |
 | `val_get(val_id)` | `str` |
+| `val_get_many(val_ids)` | `Dict[int, str]` — батч `val_get`, см. `id_get_many` |
 | `act_intern(act: Act)` | `ActId` |
 
 ## Метаданные источника
@@ -39,6 +41,12 @@
 | `src_update(src)` | перезаписать метаданные (`p`, `description`, ...) |
 | `src_list()` | `List[Src]` — все источники (используется для резолва фильтра по имени без побочных эффектов) |
 | `src_set_key_label(src_id, lb_id)` | бутстрап: дозаписать `srcs.key_label` после создания ключевой метки |
+
+Каждый `Src` несёт `struct_version` — счётчик, инкрементируемый `txn_delete`/`txn_archive`/
+`txn_unarchive`/`lb_merge` (а значит и `ds compact`, который вызывает их же), и **только**
+ими — не `txn_insert`/`ds load`. Опознаёт для `ds get --cache`, что источник менялся
+структурно и закэшированная свёртка больше не годится, без диффа самой свёртки — см.
+[ADR-0010](../decisions/0010-incremental-fold-cache.md).
 
 ## Метаданные показателя
 

@@ -221,6 +221,127 @@ def test_merge_overrides_archive_only_turns_on():
     assert merged.include_archive is True            # preset's True is kept
 
 
+# --- incremental fold cache (`ds get --cache`) -----------------------------
+
+class _CountingAdapter(InMemoryAdapter):
+    """Spy on txn_query so a test can tell the fast path (from_cnt set) was
+    actually taken, not just that the result happens to be correct."""
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def txn_query(self, *args, **kwargs):
+        self.calls.append(kwargs)
+        return super().txn_query(*args, **kwargs)
+
+
+def test_cached_first_call_matches_plain_run_get(crm):
+    cached = svc_get.run_get_cached(crm, svc_get.GetParams(), now=_NOW, cache={})
+    plain = svc_get.run_get(crm, svc_get.GetParams(), now=_NOW)
+    assert isinstance(cached, Ok)
+    payloads, new_cache = cached.value
+    assert payloads == plain.value
+    assert set(new_cache) == {"CRM"}
+    assert new_cache["CRM"].max_cnt == payloads["CRM"]["meta"]["gen_max_cnt"]
+    assert new_cache["CRM"].struct_version == 0
+
+
+def test_cached_second_call_takes_fast_path_and_matches_full_rebuild():
+    db = _CountingAdapter()
+    svc_load.load(db, {"customer_id": ["1"], "email": ["a@e.com"]}, _cfg(), _T1)
+    r1 = svc_get.run_get_cached(db, svc_get.GetParams(), now=_T1 + 1, cache={})
+    _, cache1 = r1.value
+
+    db.calls.clear()
+    svc_load.load(db, {"customer_id": ["2"], "email": ["b@e.com"]}, _cfg(), _T2)
+    r2 = svc_get.run_get_cached(db, svc_get.GetParams(), now=_T2 + 1, cache=cache1)
+    assert isinstance(r2, Ok)
+    payloads2, cache2 = r2.value
+
+    # fast path: at least one txn_query call used from_cnt (the "what's new" query)
+    assert any(c.get("from_cnt") is not None for c in db.calls)
+
+    full = svc_get.run_get(db, svc_get.GetParams(), now=_T2 + 1)
+    assert payloads2 == full.value
+    assert cache2["CRM"].struct_version == 0
+
+
+def test_cached_struct_version_change_forces_rebuild_but_stays_correct(crm):
+    r1 = svc_get.run_get_cached(crm, svc_get.GetParams(), now=_NOW, cache={})
+    _, cache1 = r1.value
+
+    crm.txn_archive(until_dt=_T1)  # structural change -- bumps CRM's struct_version
+
+    r2 = svc_get.run_get_cached(crm, svc_get.GetParams(), now=_NOW, cache=cache1)
+    payloads2, cache2 = r2.value
+    full = svc_get.run_get(crm, svc_get.GetParams(), now=_NOW)
+    assert payloads2 == full.value
+    assert cache2["CRM"].struct_version == 1
+
+
+def test_cached_label_selection_change_forces_rebuild(crm):
+    r1 = svc_get.run_get_cached(crm, svc_get.GetParams(labels=["email"]), now=_NOW, cache={})
+    _, cache1 = r1.value
+
+    r2 = svc_get.run_get_cached(
+        crm, svc_get.GetParams(labels=["email", "phone"]), now=_NOW, cache=cache1,
+    )
+    payloads2, _ = r2.value
+    full = svc_get.run_get(crm, svc_get.GetParams(labels=["email", "phone"]), now=_NOW)
+    assert payloads2 == full.value
+
+
+def test_cached_picks_up_future_dated_row_once_it_comes_into_range():
+    # A batch can interleave a "normal" row with a future-dated one; the future
+    # row's cnt can be LOWER than other, already-folded rows from a later batch
+    # (global cnt order, not per-row dt order) -- see docs/decisions/
+    # 0010-incremental-fold-cache.md. A pure "cnt > watermark" catch-up would
+    # permanently miss it once its dt finally comes into range.
+    db = InMemoryAdapter()
+    far_future = _NOW + 10_000
+    svc_load.load(db, {"customer_id": ["1"], "email": ["scheduled"]}, _cfg(), far_future)
+    svc_load.load(db, {"customer_id": ["2"], "email": ["normal"]}, _cfg(), _T1)
+
+    r1 = svc_get.run_get_cached(db, svc_get.GetParams(), now=_NOW, cache={})
+    payloads1, cache1 = r1.value
+    ids1 = {row["customer_id"] for row in payloads1["CRM"]["data"]}
+    assert ids1 == {"2"}  # future row correctly excluded so far
+
+    r2 = svc_get.run_get_cached(db, svc_get.GetParams(), now=far_future + 1, cache=cache1)
+    payloads2, _ = r2.value
+    ids2 = {row["customer_id"] for row in payloads2["CRM"]["data"]}
+    assert ids2 == {"1", "2"}  # now in range -- must have been picked up
+
+    full = svc_get.run_get(db, svc_get.GetParams(), now=far_future + 1)
+    assert payloads2 == full.value
+
+
+def test_cache_entry_json_round_trip():
+    entry = svc_get.SourceCacheEntry(
+        struct_version=2, max_cnt=5, as_of=123.0, include_archive=True,
+        labels=("email", "phone"), winners={(1, 2): (100.0, 5, 9)},
+    )
+    restored = svc_get.cache_entry_from_json(svc_get.cache_entry_to_json(entry))
+    assert restored == entry
+
+
+def test_cache_entry_from_json_tolerates_garbage():
+    assert svc_get.cache_entry_from_json("not a dict") is None
+    assert svc_get.cache_entry_from_json({"struct_version": 1}) is None  # missing fields
+
+
+def test_load_cache_missing_file_is_empty(tmp_path):
+    assert svc_get.load_cache(tmp_path / "nope.json") == {}
+
+
+def test_save_and_load_cache_round_trip(tmp_path, crm):
+    path = tmp_path / "cache.json"
+    _, cache = svc_get.run_get_cached(crm, svc_get.GetParams(), now=_NOW, cache={}).value
+    svc_get.save_cache(path, cache)
+    reloaded = svc_get.load_cache(path)
+    assert reloaded == cache
+
+
 def test_preset_drives_get_end_to_end(crm, tmp_path):
     p = tmp_path / "preset.json"
     p.write_text(json.dumps({

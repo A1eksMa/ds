@@ -63,6 +63,23 @@ def test_val_intern_creates_entry(db):
     assert isinstance(result, Ok)
 
 
+def test_id_get_many_batches_lookups(db):
+    a = db.id_intern("a").value
+    b = db.id_intern("b").value
+    assert db.id_get_many([a, b]).value == {int(a): "a", int(b): "b"}
+
+
+def test_id_get_many_omits_unknown_ids(db):
+    a = db.id_intern("a").value
+    assert db.id_get_many([a, 9999]).value == {int(a): "a"}
+
+
+def test_val_get_many_batches_lookups(db):
+    a = db.val_intern("hello").value
+    b = db.val_intern("world").value
+    assert db.val_get_many([a, b]).value == {int(a): "hello", int(b): "world"}
+
+
 def test_val_intern_same_value_same_id(db):
     assert db.val_intern("x").value == db.val_intern("x").value
 
@@ -411,6 +428,69 @@ def test_lb_merge_across_sources_updates_src_field(db):
     txn = db.txn_query().value[0]
     assert int(txn.lb) == int(new_lb)
     assert int(txn.src) == int(src_b)
+
+
+# --- struct_version (ds get --cache invalidation signal) ---
+
+def test_struct_version_starts_at_zero(db):
+    src = _src(db)
+    assert db.src_get(src).value.struct_version == 0
+
+
+def test_txn_insert_does_not_bump_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    assert db.src_get(src).value.struct_version == 0
+
+
+def test_txn_archive_bumps_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_archive(src_id=src)
+    assert db.src_get(src).value.struct_version == 1
+
+
+def test_txn_unarchive_bumps_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_archive(src_id=src)
+    db.txn_unarchive(src_id=src)
+    assert db.src_get(src).value.struct_version == 2
+
+
+def test_txn_delete_bumps_struct_version(db):
+    src = _src(db)
+    lb = db.lb_intern("x", src).value
+    act = db.act_intern(Act.POST).value
+    id_ = db.id_intern("1").value
+    val = db.val_intern("v").value
+    _insert(db, src, lb, id_, val, act, dt=_TS)
+    db.txn_delete(src_id=src)
+    assert db.src_get(src).value.struct_version == 1
+
+
+def test_lb_merge_bumps_struct_version_on_both_sources(db):
+    src_a = _src(db, "A")
+    src_b = _src(db, "B")
+    old_lb = db.lb_intern("old", src_a).value
+    new_lb = db.lb_intern("new", src_b).value
+
+    db.lb_merge(old_lb, new_lb)
+
+    assert db.src_get(src_a).value.struct_version == 1
+    assert db.src_get(src_b).value.struct_version == 1
 
 
 def test_txn_delete_by_src(db):

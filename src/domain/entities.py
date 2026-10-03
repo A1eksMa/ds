@@ -19,6 +19,11 @@ class Src:
     p: float
     key_label: Optional[LbId]  # None until the key label is bootstrapped (see StoragePort.src_set_key_label)
     description: Optional[str] = None
+    # Bumped by txn_delete/txn_archive/txn_unarchive/lb_merge (never by txn_insert/load) --
+    # lets `ds get --cache` tell "pure appends since last time" from "something
+    # structural happened" without re-diffing the whole fold. See
+    # docs/decisions/0010-incremental-fold-cache.md.
+    struct_version: int = 0
 
 
 @dataclass(frozen=True)

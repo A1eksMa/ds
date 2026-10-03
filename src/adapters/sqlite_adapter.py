@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS srcs (
     description TEXT,
     p           REAL    NOT NULL DEFAULT 0.5,
     key_label   INTEGER,                        -- NULL until bootstrapped (see src_set_key_label)
+    struct_version INTEGER NOT NULL DEFAULT 0,   -- bumped by txn_delete/txn_archive/txn_unarchive/
+    --                                              lb_merge, never by txn_insert -- see `ds get --cache`
     FOREIGN KEY (key_label) REFERENCES lbs(lb_id)
 );
 
@@ -178,6 +180,14 @@ class SQLiteAdapter:
     def __init__(self, db_path: str, clock: ClockPort = None) -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
+        # `srcs.struct_version` was added after `CREATE TABLE IF NOT EXISTS` could
+        # already have run against an older DB -- no schema versioning (ADR-0008),
+        # so retrofit it here instead.
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(srcs)")}
+        if "struct_version" not in cols:
+            self._conn.execute(
+                "ALTER TABLE srcs ADD COLUMN struct_version INTEGER NOT NULL DEFAULT 0"
+            )
         self._conn.commit()
         self._conn.isolation_level = None  # autocommit; transactions managed explicitly
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -255,6 +265,22 @@ class SQLiteAdapter:
         except sqlite3.Error as exc:
             return Err(StorageError(str(exc)))
 
+    def id_get_many(self, id_ids: List[IdId]) -> Union[Ok[Dict[int, str]], Err[StorageError]]:
+        try:
+            ids = sorted({int(x) for x in id_ids})
+            out: Dict[int, str] = {}
+            for chunk in _chunks(ids, _SQLITE_MAX_VARS):
+                if not chunk:
+                    continue
+                placeholders = ",".join("?" * len(chunk))
+                rows = self._conn.execute(
+                    f"SELECT id_id, value FROM ids WHERE id_id IN ({placeholders})", chunk,
+                ).fetchall()
+                out.update({r[0]: r[1] for r in rows})
+            return Ok(out)
+        except sqlite3.Error as exc:
+            return Err(StorageError(str(exc)))
+
     def id_lookup(self, value: str) -> Union[Ok[Optional[IdId]], Err[StorageError]]:
         """Reverse lookup, value -> IdId, WITHOUT creating an entry if it
         doesn't exist (unlike id_intern) -- for resolving --id VALUE the same
@@ -300,6 +326,22 @@ class SQLiteAdapter:
         except sqlite3.Error as exc:
             return Err(StorageError(str(exc)))
 
+    def val_get_many(self, val_ids: List[ValId]) -> Union[Ok[Dict[int, str]], Err[StorageError]]:
+        try:
+            ids = sorted({int(x) for x in val_ids})
+            out: Dict[int, str] = {}
+            for chunk in _chunks(ids, _SQLITE_MAX_VARS):
+                if not chunk:
+                    continue
+                placeholders = ",".join("?" * len(chunk))
+                rows = self._conn.execute(
+                    f"SELECT val_id, value FROM vals WHERE val_id IN ({placeholders})", chunk,
+                ).fetchall()
+                out.update({r[0]: r[1] for r in rows})
+            return Ok(out)
+        except sqlite3.Error as exc:
+            return Err(StorageError(str(exc)))
+
     def act_intern(self, act: Act) -> Union[Ok[ActId], Err[StorageError]]:
         try:
             name = act.value
@@ -330,7 +372,7 @@ class SQLiteAdapter:
                 (name,),
             )
             row = self._conn.execute(
-                "SELECT src_id, name, description, p, key_label FROM srcs WHERE name = ?",
+                "SELECT src_id, name, description, p, key_label, struct_version FROM srcs WHERE name = ?",
                 (name,),
             ).fetchone()
             record = SrcRecord.from_row(row)
@@ -345,7 +387,7 @@ class SQLiteAdapter:
     def src_get(self, src_id: SrcId) -> Union[Ok[Src], Err[StorageError]]:
         try:
             row = self._conn.execute(
-                "SELECT src_id, name, description, p, key_label FROM srcs WHERE src_id = ?",
+                "SELECT src_id, name, description, p, key_label, struct_version FROM srcs WHERE src_id = ?",
                 (int(src_id),),
             ).fetchone()
             if row is None:
@@ -385,7 +427,7 @@ class SQLiteAdapter:
     def src_list(self) -> Union[Ok[List[Src]], Err[StorageError]]:
         try:
             rows = self._conn.execute(
-                "SELECT src_id, name, description, p, key_label FROM srcs"
+                "SELECT src_id, name, description, p, key_label, struct_version FROM srcs"
             ).fetchall()
             result: List[Src] = []
             for row in rows:
@@ -446,6 +488,20 @@ class SQLiteAdapter:
         except sqlite3.Error as exc:
             return Err(StorageError(str(exc)))
 
+    def _bump_struct_versions(self, src_ids) -> None:
+        """Mark one or more sources as structurally changed since their last
+        `ds get --cache` fold -- called from inside txn_delete/txn_archive/
+        txn_unarchive/lb_merge, never from txn_insert. Must run before commit()
+        in the caller's own transaction."""
+        ids = sorted({int(s) for s in src_ids})
+        if not ids:
+            return
+        placeholders = ",".join("?" * len(ids))
+        self._conn.execute(
+            f"UPDATE srcs SET struct_version = struct_version + 1 WHERE src_id IN ({placeholders})",
+            ids,
+        )
+
     def lb_merge(
         self, from_lb_id: LbId, into_lb_id: LbId,
     ) -> Union[Ok[int], Err[StorageError]]:
@@ -468,6 +524,9 @@ class SQLiteAdapter:
                 )
                 moved += cur.rowcount
             self._conn.execute("DELETE FROM lbs WHERE lb_id = ?", (int(from_lb_id),))
+            # both ends of the move are structurally dirty: from_src_id lost a label,
+            # into_src_id's data for into_lb_id may have just absorbed a transition period
+            self._bump_struct_versions({from_src_id, into_src_id})
             self._conn.commit()
             self._lb_cache.pop((from_src_id, from_name), None)
             return Ok(moved)
@@ -577,6 +636,7 @@ class SQLiteAdapter:
             lb_list = sorted({int(x) for x in lb_ids}) if lb_ids is not None else None
             cnt_list = sorted({int(x) for x in cnts}) if cnts is not None else None
             moved = 0
+            touched_srcs: set = set()
             for id_chunk in _id_chunks(list(id_ids) if id_ids is not None else None):
                 clauses, params = _filter_clauses(
                     int(src_id) if src_id is not None else None,
@@ -584,6 +644,11 @@ class SQLiteAdapter:
                     from_dt, until_dt, created_from, created_until,
                 )
                 where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+                touched_srcs.update(
+                    r[0] for r in self._conn.execute(
+                        f"SELECT DISTINCT src FROM transactions {where}", params
+                    ).fetchall()
+                )
                 cur = self._conn.execute(
                     "INSERT INTO transactions_archive "
                     "SELECT cnt, act, dt, src, lb, id, val, p, created_at "
@@ -592,6 +657,7 @@ class SQLiteAdapter:
                 )
                 moved += cur.rowcount
                 self._conn.execute(f"DELETE FROM transactions {where}", params)
+            self._bump_struct_versions(touched_srcs)
             self._conn.commit()
             return Ok(moved)
         except sqlite3.Error as exc:
@@ -614,6 +680,7 @@ class SQLiteAdapter:
             lb_list = sorted({int(x) for x in lb_ids}) if lb_ids is not None else None
             cnt_list = sorted({int(x) for x in cnts}) if cnts is not None else None
             moved = 0
+            touched_srcs: set = set()
             for id_chunk in _id_chunks(list(id_ids) if id_ids is not None else None):
                 clauses, params = _filter_clauses(
                     int(src_id) if src_id is not None else None,
@@ -621,6 +688,11 @@ class SQLiteAdapter:
                     from_dt, until_dt, created_from, created_until,
                 )
                 where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+                touched_srcs.update(
+                    r[0] for r in self._conn.execute(
+                        f"SELECT DISTINCT src FROM transactions_archive {where}", params
+                    ).fetchall()
+                )
                 cur = self._conn.execute(
                     "INSERT INTO transactions "
                     "SELECT cnt, act, dt, src, lb, id, val, p, created_at "
@@ -629,6 +701,7 @@ class SQLiteAdapter:
                 )
                 moved += cur.rowcount
                 self._conn.execute(f"DELETE FROM transactions_archive {where}", params)
+            self._bump_struct_versions(touched_srcs)
             self._conn.commit()
             return Ok(moved)
         except sqlite3.Error as exc:
@@ -651,6 +724,7 @@ class SQLiteAdapter:
             lb_list = sorted({int(x) for x in lb_ids}) if lb_ids is not None else None
             cnt_list = sorted({int(x) for x in cnts}) if cnts is not None else None
             deleted = 0
+            touched_srcs: set = set()
             for id_chunk in _id_chunks(list(id_ids) if id_ids is not None else None):
                 clauses, params = _filter_clauses(
                     int(src_id) if src_id is not None else None,
@@ -658,11 +732,18 @@ class SQLiteAdapter:
                     from_dt, until_dt, created_from, created_until,
                 )
                 where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+                for table in ("transactions", "transactions_archive"):
+                    touched_srcs.update(
+                        r[0] for r in self._conn.execute(
+                            f"SELECT DISTINCT src FROM {table} {where}", params
+                        ).fetchall()
+                    )
                 cur1 = self._conn.execute(f"DELETE FROM transactions {where}", params)
                 cur2 = self._conn.execute(f"DELETE FROM transactions_archive {where}", params)
                 # both tables count toward the total: a hard delete must account for
                 # rows in the archive too, not just the active table
                 deleted += cur1.rowcount + cur2.rowcount
+            self._bump_struct_versions(touched_srcs)
             self._conn.commit()
             return Ok(deleted)
         except sqlite3.Error as exc:

@@ -81,11 +81,11 @@ def _resolve_where(storage: StoragePort, src_id: SrcId, lb_name: str, target: st
     txns_r = storage.txn_query(src_id=src_id, lb_ids=[lb.lb_id], include_archive=True)
     if isinstance(txns_r, Err):
         return txns_r
-    folded = fold_source(txns_r.value)  # {(lb_id, id_id): val_id}
+    folded = fold_source(txns_r.value)  # {(lb_id, id_id): (dt, cnt, val_id)}
 
     matching: List[IdId] = []
     val_cache = {}
-    for (_, id_id), val_id in folded.items():
+    for (_, id_id), (_dt, _cnt, val_id) in folded.items():
         if val_id == 0:  # DELETE -- no string value to compare
             continue
         if val_id not in val_cache:

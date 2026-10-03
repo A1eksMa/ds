@@ -17,7 +17,8 @@
 | [0006](0006-fold-order-dt-cnt.md) | Свёртка Level 1 — по `(dt, cnt)` | Принято, не реализовано |
 | [0007](0007-scope-freeze-storage-core.md) | Заморозка репозитория на слое ядра-хранилища | Принято |
 | [0008](0008-no-separate-schema-versioning.md) | Схема не версионируется отдельно от кода | Принято |
-| [0009](0009-entity-curation-rewrite-vs-events.md) | merge/split: переписывать журнал или события? | Открыто |
+| [0009](0009-entity-curation-rewrite-vs-events.md) | merge/split: переписывать журнал или события? | Частично решено (rename/merge `lbs`) |
+| [0010](0010-incremental-fold-cache.md) | `ds get --cache`: инкрементальная свёртка, приватный кэш в `ds` | Принято, реализовано (0.10.0a1) |
 
 ## Шаблон
 

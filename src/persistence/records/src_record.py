@@ -11,6 +11,7 @@ class SrcRecord:
     p: float
     key_label: Optional[int]  # None until bootstrapped
     description: Optional[str] = None
+    struct_version: int = 0
 
     @staticmethod
     def from_row(row: Tuple) -> SrcRecord:
@@ -20,4 +21,5 @@ class SrcRecord:
             description=row[2],
             p=row[3],
             key_label=row[4],
+            struct_version=row[5],
         )
